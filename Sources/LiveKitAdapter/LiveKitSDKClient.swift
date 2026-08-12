@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreMedia
 import Foundation
 import LiveKit
@@ -7,6 +8,14 @@ import LiveKit
 /// This client deliberately accepts the application's existing pixel buffers instead
 /// of asking LiveKit to open another camera capture session.
 final class LiveKitSDKClient: NSObject, @unchecked Sendable {
+    /// LiveKit Swift 2.16 has no supported API for injecting the application's
+    /// AVCaptureAudioDataOutput buffers into a local WebRTC track. StageGlass Link
+    /// therefore keeps one explicit microphone owner instead of silently opening
+    /// two capture graphs for the same device.
+    enum MicrophoneCaptureOwnership: Equatable, Sendable {
+        case application
+        case liveKit
+    }
     enum State: Equatable, Sendable {
         case idle
         case connecting
@@ -33,14 +42,18 @@ final class LiveKitSDKClient: NSObject, @unchecked Sendable {
     var onStateChanged: (@Sendable (State) -> Void)?
     var onTracksChanged: (@Sendable ([TrackDescriptor]) -> Void)?
     var onVideoFrame: (@Sendable (_ trackID: String, _ pixelBuffer: CVPixelBuffer, _ presentationTime: CMTime) -> Void)?
+    var onAudioFrame: (@Sendable (_ trackID: String, _ pcmBuffer: AVAudioPCMBuffer) -> Void)?
 
     private let room: Room
     private let lock = NSLock()
     private var cameraTrack: LocalVideoTrack?
     private var cameraCapturer: BufferCapturer?
     private var renderers: [String: PixelBufferRenderer] = [:]
+    private var audioRenderers: [String: PCMBufferRenderer] = [:]
+    private let microphoneCaptureOwnership: MicrophoneCaptureOwnership
 
-    override init() {
+    init(microphoneCaptureOwnership: MicrophoneCaptureOwnership = .application) {
+        self.microphoneCaptureOwnership = microphoneCaptureOwnership
         room = Room()
         super.init()
         room.add(delegate: self)
@@ -91,6 +104,9 @@ final class LiveKitSDKClient: NSObject, @unchecked Sendable {
     }
 
     func setMicrophoneEnabled(_ enabled: Bool) async throws {
+        if enabled, microphoneCaptureOwnership == .application {
+            throw ConnectionError(message: Self.externalMicrophoneCaptureMessage)
+        }
         try await room.localParticipant.setMicrophone(enabled: enabled)
     }
 
@@ -105,6 +121,7 @@ final class LiveKitSDKClient: NSObject, @unchecked Sendable {
     func disconnect() async {
         lock.withLock {
             renderers.removeAll()
+            audioRenderers.removeAll()
             cameraTrack = nil
             cameraCapturer = nil
         }
@@ -118,6 +135,9 @@ final class LiveKitSDKClient: NSObject, @unchecked Sendable {
         guard !token.isEmpty else { return raw }
         return raw.replacingOccurrences(of: token, with: "<redacted>")
     }
+
+    static let externalMicrophoneCaptureMessage =
+        "Microphone publishing is unavailable while StageGlass Link owns capture. LiveKit Swift 2.16 cannot accept the existing microphone buffers without opening a second capture graph."
 
     private func remotePublication(withID id: String) -> RemoteTrackPublication? {
         room.remoteParticipants.values
@@ -149,17 +169,28 @@ final class LiveKitSDKClient: NSObject, @unchecked Sendable {
     }
 
     private func attachRendererIfNeeded(to publication: RemoteTrackPublication) {
-        guard let track = publication.track as? RemoteVideoTrack else { return }
         let trackID = publication.sid.stringValue
-        let renderer: PixelBufferRenderer = lock.withLock {
-            if let existing = renderers[trackID] { return existing }
-            let created = PixelBufferRenderer(trackID: trackID) { [weak self] id, pixelBuffer, pts in
-                self?.onVideoFrame?(id, pixelBuffer, pts)
+        if let track = publication.track as? RemoteVideoTrack {
+            let renderer: PixelBufferRenderer = lock.withLock {
+                if let existing = renderers[trackID] { return existing }
+                let created = PixelBufferRenderer(trackID: trackID) { [weak self] id, pixelBuffer, pts in
+                    self?.onVideoFrame?(id, pixelBuffer, pts)
+                }
+                renderers[trackID] = created
+                return created
             }
-            renderers[trackID] = created
-            return created
+            track.add(videoRenderer: renderer)
+        } else if let track = publication.track as? RemoteAudioTrack {
+            let renderer: PCMBufferRenderer = lock.withLock {
+                if let existing = audioRenderers[trackID] { return existing }
+                let created = PCMBufferRenderer(trackID: trackID) { [weak self] id, buffer in
+                    self?.onAudioFrame?(id, buffer)
+                }
+                audioRenderers[trackID] = created
+                return created
+            }
+            track.add(audioRenderer: renderer)
         }
-        track.add(videoRenderer: renderer)
     }
 
     private static func kind(for source: Track.Source) -> TrackDescriptor.Kind {
@@ -205,7 +236,10 @@ extension LiveKitSDKClient: RoomDelegate {
     }
 
     nonisolated func room(_ room: Room, participant: RemoteParticipant, didUnpublishTrack publication: RemoteTrackPublication) {
-        _ = lock.withLock { renderers.removeValue(forKey: publication.sid.stringValue) }
+        _ = lock.withLock {
+            renderers.removeValue(forKey: publication.sid.stringValue)
+            audioRenderers.removeValue(forKey: publication.sid.stringValue)
+        }
         emitTracks()
     }
 
@@ -216,6 +250,20 @@ extension LiveKitSDKClient: RoomDelegate {
 
     nonisolated func room(_ room: Room, participant: Participant, trackPublication: TrackPublication, didUpdateIsMuted isMuted: Bool) {
         emitTracks()
+    }
+}
+
+private final class PCMBufferRenderer: NSObject, AudioRenderer, @unchecked Sendable {
+    let trackID: String
+    private let onFrame: @Sendable (String, AVAudioPCMBuffer) -> Void
+
+    init(trackID: String, onFrame: @escaping @Sendable (String, AVAudioPCMBuffer) -> Void) {
+        self.trackID = trackID
+        self.onFrame = onFrame
+    }
+
+    nonisolated func render(pcmBuffer: AVAudioPCMBuffer) {
+        onFrame(trackID, pcmBuffer)
     }
 }
 
