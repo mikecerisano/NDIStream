@@ -1,4 +1,6 @@
-# QuicLink — Next Session TODO
+# QuicLink — Historical Next Session TODO
+
+> **Superseded 2026-08-12:** QuicLink is no longer a release direction. StageGlass Link uses LiveKit/WebRTC as its primary transport and retains NDI on macOS. See `docs/specs/2026-08-12-stageglass-link-architecture.md` and `docs/plans/2026-08-12-stageglass-link-phased-plan.md`. Do not execute the tasks below for release work.
 
 _Last updated: 2026-05-28. Branch: `feature/quiclink-foundations` (not merged to `main`)._
 

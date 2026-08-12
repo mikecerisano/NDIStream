@@ -1,4 +1,6 @@
-# WarpStream: third transport for the NDI vs QuicLink vs WarpStream shootout
+# WarpStream: third transport for the NDI vs QuicLink vs WarpStream shootout (Historical)
+
+> **Superseded 2026-08-12:** WarpStream is no longer a release direction. See `docs/specs/2026-08-12-stageglass-link-architecture.md`.
 
 **Date:** 2026-06-04
 **Status:** Design approved, pending spec review

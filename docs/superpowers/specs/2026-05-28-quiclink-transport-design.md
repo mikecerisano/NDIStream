@@ -1,4 +1,6 @@
-# QuicLink: a loss-resilient transport alongside NDI
+# QuicLink: a loss-resilient transport alongside NDI (Historical)
+
+> **Superseded 2026-08-12:** QuicLink is no longer a release direction. See `docs/specs/2026-08-12-stageglass-link-architecture.md`.
 
 **Date:** 2026-05-28
 **Status:** Design approved, pending spec review
