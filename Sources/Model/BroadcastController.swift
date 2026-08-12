@@ -220,6 +220,8 @@ final class BroadcastController: ObservableObject {
     }
     @Published var isLocked: Bool = false
 
+    let linkConnection: LinkConnectionController
+
     let cameraManager = CameraManager()
     let recorder = Recorder(filenamePrefix: "Sender")
     private var sender: VideoSender?
@@ -245,8 +247,12 @@ final class BroadcastController: ObservableObject {
     /// underlying transport's `currentStats()`.
     var activeSender: VideoSender? { currentSender() }
 
-    init() {
+    init(makeLinkSession: LinkMediaSessionFactory? = nil) {
         DebugLog.write("BroadcastController.init")
+        self.linkConnection = LinkConnectionController(defaults: .standard,
+                                                       keyPrefix: "sender",
+                                                       defaultDisplayName: "Mac Camera",
+                                                       makeSession: makeLinkSession)
         let cameras = CameraManager.availableDevices()
         self.availableCameras = cameras
         let audioDevices = CameraManager.availableAudioDevices()

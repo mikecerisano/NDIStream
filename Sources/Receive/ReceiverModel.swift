@@ -38,6 +38,8 @@ final class ReceiverModel: NSObject, ObservableObject {
     }
     @Published var isLocked: Bool = false
 
+    let linkConnection: LinkConnectionController
+
     struct FrameFormat: Equatable {
         let width: Int
         let height: Int
@@ -61,8 +63,12 @@ final class ReceiverModel: NSObject, ObservableObject {
     private var receivedFrameCount = 0
     private var hasPerformedInitialAutoselect = false
 
-    override init() {
+    init(makeLinkSession: LinkMediaSessionFactory? = nil) {
         DebugLog.write("ReceiverModel.init")
+        self.linkConnection = LinkConnectionController(defaults: .standard,
+                                                       keyPrefix: "receiver",
+                                                       defaultDisplayName: "Mac Receiver",
+                                                       makeSession: makeLinkSession)
         self.finders = TransportFactory.makeFinders()
         // Default to .ndi on first launch, restore last-used otherwise (per spec §"UI changes").
         let savedTransport = LinkMode.restored(from: .standard,

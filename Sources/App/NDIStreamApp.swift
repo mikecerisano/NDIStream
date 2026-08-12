@@ -142,6 +142,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var sourceNameField = NSTextField(string: "")
     private var qualityControl = NSSegmentedControl()
     private var senderTransportControl = NSSegmentedControl()
+    private var senderLinkContainer = NSStackView()
+    private var senderLinkServerField = NSTextField(string: "")
+    private var senderLinkRoomField = NSTextField(string: "")
+    private var senderLinkNameField = NSTextField(string: "")
+    private var senderLinkTokenField = NSSecureTextField(string: "")
+    private var senderLinkButton = NSButton()
+    private var senderLinkStatusLabel = NSTextField(labelWithString: "")
     private var senderRoomCodeLabel = NSTextField(labelWithString: "")
     private var senderRoomCodeCopyButton = NSButton()
     private var senderRoomCodeContainer = NSStackView()
@@ -189,6 +196,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var receiverTopBar: NSStackView!
     private var receiverBottomBar: NSStackView!
     private var receiverTransportControl = NSSegmentedControl()
+    private var receiverLinkContainer = NSStackView()
+    private var receiverLinkServerField = NSTextField(string: "")
+    private var receiverLinkRoomField = NSTextField(string: "")
+    private var receiverLinkNameField = NSTextField(string: "")
+    private var receiverLinkTokenField = NSSecureTextField(string: "")
+    private var receiverLinkButton = NSButton()
+    private var receiverLinkStatusLabel = NSTextField(labelWithString: "")
     private var receiverRoomCodeField = NSTextField(string: "")
     private var receiverJoinByCodeButton = NSButton()
     private var receiverRoomCodeContainer = NSStackView()
@@ -360,6 +374,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ])
         senderTransportRow.spacing = 8
         content.addArrangedSubview(senderTransportRow)
+        senderLinkContainer = makeLinkConnectionForm(server: senderLinkServerField,
+                                                     room: senderLinkRoomField,
+                                                     name: senderLinkNameField,
+                                                     token: senderLinkTokenField,
+                                                     button: senderLinkButton,
+                                                     status: senderLinkStatusLabel,
+                                                     action: #selector(toggleSenderLink))
+        content.addArrangedSubview(senderLinkContainer)
 
         content.addArrangedSubview(sectionLabel("Camera"))
         senderCameraDropdown.target = self
@@ -546,6 +568,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         root.addArrangedSubview(topBar)
         root.addArrangedSubview(receiverTransportRow)
+        receiverLinkContainer = makeLinkConnectionForm(server: receiverLinkServerField,
+                                                       room: receiverLinkRoomField,
+                                                       name: receiverLinkNameField,
+                                                       token: receiverLinkTokenField,
+                                                       button: receiverLinkButton,
+                                                       status: receiverLinkStatusLabel,
+                                                       action: #selector(toggleReceiverLink))
+        receiverLinkContainer.edgeInsets = NSEdgeInsets(top: 4, left: 10, bottom: 4, right: 10)
+        root.addArrangedSubview(receiverLinkContainer)
         root.addArrangedSubview(bottomBar)
         root.addArrangedSubview(display)
         receiverWindow = makeWindow(title: "StageGlass Link — Receiver", content: root, size: NSSize(width: 820, height: 540))
@@ -585,10 +616,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         senderController.recorder.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.updateSenderUI() }
         }.store(in: &cancellables)
+        senderController.linkConnection.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.updateSenderUI() }
+        }.store(in: &cancellables)
         receiverModel.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.updateReceiverUI() }
         }.store(in: &cancellables)
         receiverModel.recorder.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.updateReceiverUI() }
+        }.store(in: &cancellables)
+        receiverModel.linkConnection.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.updateReceiverUI() }
         }.store(in: &cancellables)
     }
@@ -635,6 +672,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateStatusMenu()
         // Keep transport picker reflecting model state if it changed elsewhere.
         senderTransportControl.selectedSegment = AppDelegate.transportIndex(senderController.transport)
+        let link = senderController.linkConnection
+        senderLinkContainer.isHidden = senderController.transport != .link
+        senderLinkServerField.stringValue = link.serverURL
+        senderLinkRoomField.stringValue = link.roomName
+        senderLinkNameField.stringValue = link.displayName
+        senderLinkButton.title = link.isJoined ? "Leave" : "Join"
+        senderLinkButton.isEnabled = !locked && !link.isBusy
+        senderLinkStatusLabel.stringValue = link.statusText
+        if link.accessToken.isEmpty { senderLinkTokenField.stringValue = "" }
     }
 
     private func updateReceiverUI() {
@@ -666,6 +712,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateStatusMenu()
         // Keep transport picker reflecting model state if it changed elsewhere.
         receiverTransportControl.selectedSegment = AppDelegate.transportIndex(receiverModel.selectedTransport)
+        let link = receiverModel.linkConnection
+        receiverLinkContainer.isHidden = receiverModel.selectedTransport != .link
+        receiverLinkServerField.stringValue = link.serverURL
+        receiverLinkRoomField.stringValue = link.roomName
+        receiverLinkNameField.stringValue = link.displayName
+        receiverLinkButton.title = link.isJoined ? "Leave" : "Join"
+        receiverLinkButton.isEnabled = !locked && !link.isBusy
+        receiverLinkStatusLabel.stringValue = link.statusText
+        if link.accessToken.isEmpty { receiverLinkTokenField.stringValue = "" }
     }
 
     private var receiverTallyColor: NSColor {
@@ -1017,6 +1072,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return stack
     }
 
+    private func makeLinkConnectionForm(server: NSTextField,
+                                        room: NSTextField,
+                                        name: NSTextField,
+                                        token: NSSecureTextField,
+                                        button: NSButton,
+                                        status: NSTextField,
+                                        action: Selector) -> NSStackView {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 5
+        for field in [server, room, name, token] {
+            field.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        }
+        server.placeholderString = "wss://link.example.com"
+        room.placeholderString = "Room"
+        name.placeholderString = "Display name"
+        token.placeholderString = "Short-lived access token"
+        stack.addArrangedSubview(labeledRow("Server", server))
+        stack.addArrangedSubview(labeledRow("Room", room))
+        stack.addArrangedSubview(labeledRow("Name", name))
+        stack.addArrangedSubview(labeledRow("Token", token))
+        let actions = row()
+        button.target = self
+        button.action = action
+        actions.addArrangedSubview(button)
+        status.textColor = .secondaryLabelColor
+        status.lineBreakMode = .byTruncatingTail
+        actions.addArrangedSubview(status)
+        stack.addArrangedSubview(actions)
+        return stack
+    }
+
     private func row() -> NSStackView {
         let stack = NSStackView()
         stack.orientation = .horizontal
@@ -1061,6 +1149,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DebugLog.write("UI receiverTransportChanged -> \(new.rawValue)")
         receiverModel.selectedTransport = new
         updateReceiverUI()
+    }
+
+    @objc private func toggleSenderLink() {
+        let connection = senderController.linkConnection
+        if connection.isJoined {
+            Task { await connection.leave() }
+            return
+        }
+        connection.serverURL = senderLinkServerField.stringValue
+        connection.roomName = senderLinkRoomField.stringValue
+        connection.displayName = senderLinkNameField.stringValue
+        connection.accessToken = senderLinkTokenField.stringValue
+        connection.saveNonSecretFields(keyPrefix: "sender")
+        Task { await connection.join() }
+    }
+
+    @objc private func toggleReceiverLink() {
+        let connection = receiverModel.linkConnection
+        if connection.isJoined {
+            Task { await connection.leave() }
+            return
+        }
+        connection.serverURL = receiverLinkServerField.stringValue
+        connection.roomName = receiverLinkRoomField.stringValue
+        connection.displayName = receiverLinkNameField.stringValue
+        connection.accessToken = receiverLinkTokenField.stringValue
+        connection.saveNonSecretFields(keyPrefix: "receiver")
+        Task { await connection.join() }
     }
 
     // MARK: Stats overlay (WarpStream integration)
