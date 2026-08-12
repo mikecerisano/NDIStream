@@ -28,6 +28,14 @@ protocol LiveKitClient: AnyObject {
     func disconnect() async
 }
 
+extension LiveKitClient {
+    /// Optional for test doubles and adapters that do not expose subscribed audio.
+    var onAudioFrame: ((_ trackID: String, _ pcmBuffer: AVAudioPCMBuffer) -> Void)? {
+        get { nil }
+        set { }
+    }
+}
+
 /// LiveKit implementation of the product-owned media-session contract.
 ///
 /// Video stays application-owned: `CameraManager` feeds one `LocalMediaSource`, and

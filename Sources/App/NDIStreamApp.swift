@@ -124,8 +124,12 @@ enum ActivityKeeper {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    private let senderController = BroadcastController()
-    private let receiverModel = ReceiverModel()
+    private let senderController = BroadcastController(makeLinkSession: {
+        LiveKitMediaSession(client: LiveKitSDKClient(microphoneCaptureOwnership: .liveKit))
+    })
+    private let receiverModel = ReceiverModel(makeLinkSession: {
+        LiveKitMediaSession(client: LiveKitSDKClient(microphoneCaptureOwnership: .application))
+    })
     private var cancellables: Set<AnyCancellable> = []
     private var statusItem: NSStatusItem!
     private var statusBroadcastItem: NSMenuItem!
