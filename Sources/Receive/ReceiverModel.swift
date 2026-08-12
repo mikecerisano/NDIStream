@@ -87,6 +87,7 @@ final class ReceiverModel: NSObject, ObservableObject {
         self.autoRecord = UserDefaults.standard.bool(forKey: "receiverAutoRecord")
         self.audioEnabled = UserDefaults.standard.bool(forKey: "receiverAudioEnabled")
         audioPlayer.setMuted(!audioEnabled)
+        wireLinkCallbacks()
 
         // Wire every finder's callback to merge into allSources.
         for finder in finders {
@@ -194,6 +195,70 @@ final class ReceiverModel: NSObject, ObservableObject {
         statusLine = "Disconnected"
         lastFormat = nil
         DebugLog.write("receiver disconnected")
+    }
+
+    private func wireLinkCallbacks() {
+        linkConnection.onSessionStateChanged = { [weak self] state in
+            guard let self, self.selectedTransport == .link else { return }
+            switch state {
+            case .idle:
+                self.finishLinkReception(status: "Disconnected")
+            case .connecting:
+                self.isConnected = true
+                self.tally = .waiting
+                self.statusLine = "Joining Link room…"
+            case .connected:
+                self.isConnected = true
+                self.tally = .waiting
+                self.statusLine = "Joined • waiting for camera"
+                ActivityKeeper.begin("receiver-link")
+                if self.autoRecord, !self.recorder.isRecording {
+                    self.recorder.start(slate: self.slate, includeAudio: true)
+                }
+            case .reconnecting:
+                self.isConnected = true
+                self.tally = .reconnecting
+                self.statusLine = "Link reconnecting…"
+            case .failed(let message):
+                self.finishLinkReception(status: message)
+            }
+        }
+        linkConnection.onRemoteVideoFrame = { [weak self] _, sampleBuffer in
+            guard let self, self.selectedTransport == .link else { return }
+            self.receiveLinkVideo(sampleBuffer)
+        }
+        linkConnection.onRemoteAudio = { [weak self] _, sampleBuffer in
+            guard let self, self.selectedTransport == .link else { return }
+            self.recorder.appendAudio(sampleBuffer: sampleBuffer)
+            self.audioPlayer.schedule(sampleBuffer: sampleBuffer)
+        }
+    }
+
+    private func receiveLinkVideo(_ sampleBuffer: CMSampleBuffer) {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        recorder.append(pixelBuffer: pixelBuffer, pts: pts)
+        let duration = CMSampleBufferGetDuration(sampleBuffer)
+        let fps = duration.isNumeric && duration.seconds > 0
+            ? Int((1 / duration.seconds).rounded())
+            : 0
+        let subtype = CMSampleBufferGetFormatDescription(sampleBuffer)
+            .map(CMFormatDescriptionGetMediaSubType) ?? 0
+        enqueueSampleBuffer(sampleBuffer, width: width, height: height,
+                            frameRateN: fps, frameRateD: 1, fourCC: subtype)
+    }
+
+    private func finishLinkReception(status: String) {
+        if recorder.isRecording { recorder.stop() }
+        isConnected = false
+        tally = .idle
+        audioPlayer.stop()
+        ActivityKeeper.end("receiver-link")
+        displayLayer.flushAndRemoveImage()
+        statusLine = status
+        lastFormat = nil
     }
 }
 

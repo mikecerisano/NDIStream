@@ -1,4 +1,5 @@
 import Combine
+import CoreMedia
 import Foundation
 
 /// Construction seam owned by the app composition root. Models never import a
@@ -69,6 +70,13 @@ final class LinkConnectionController: ObservableObject {
     @Published var displayName: String
     @Published var accessToken = ""
     @Published private(set) var state: SessionState = .idle
+    @Published private(set) var remoteTracks: [RemoteMediaTrack] = []
+    @Published private(set) var selectedVideoTrack: MediaTrackSelectionID?
+    @Published private(set) var selectedAudioTrack: MediaTrackSelectionID?
+
+    var onRemoteVideoFrame: ((MediaTrackID, CMSampleBuffer) -> Void)?
+    var onRemoteAudio: ((MediaTrackID, CMSampleBuffer) -> Void)?
+    var onSessionStateChanged: ((SessionState) -> Void)?
 
     private let makeSession: LinkMediaSessionFactory?
     private var session: MediaSession?
@@ -112,22 +120,42 @@ final class LinkConnectionController: ObservableObject {
             guard let makeSession else { throw LinkConnectionInputError.sessionUnavailable }
             let created = makeSession()
             session = created
+            subscribedTrackIDs.removeAll()
             created.onStateChanged = { [weak self, weak created] newState in
                 Task { @MainActor in
                     guard let self, let created, self.session === created else { return }
-                    self.state = newState
+                    self.setState(newState)
                 }
             }
-            state = .connecting
+            created.onRemoteTracksChanged = { [weak self, weak created] tracks in
+                Task { @MainActor in
+                    guard let self, let created, self.session === created else { return }
+                    self.receive(tracks: tracks)
+                }
+            }
+            created.onRemoteVideoFrame = { [weak self, weak created] trackID, sampleBuffer in
+                Task { @MainActor in
+                    guard let self, let created, self.session === created else { return }
+                    self.receiveVideo(trackID: trackID, sampleBuffer: sampleBuffer)
+                }
+            }
+            created.onRemoteAudio = { [weak self, weak created] trackID, sampleBuffer in
+                Task { @MainActor in
+                    guard let self, let created, self.session === created else { return }
+                    self.receiveAudio(trackID: trackID, sampleBuffer: sampleBuffer)
+                }
+            }
+            setState(.connecting)
             try await created.connect(configuration: configuration)
             // Some adapters report state through the callback; normalize adapters that
             // complete connect before dispatching their notification.
-            state = created.state == .connecting ? .connected : created.state
+            setState(created.state == .connecting ? .connected : created.state)
+            receive(tracks: created.remoteTracks)
         } catch {
             let failed = session
             session = nil
             await failed?.disconnect()
-            state = .failed(message: error.localizedDescription)
+            setState(.failed(message: error.localizedDescription))
         }
     }
 
@@ -136,7 +164,11 @@ final class LinkConnectionController: ObservableObject {
         session = nil
         await current?.disconnect()
         accessToken = ""
-        state = .idle
+        remoteTracks = []
+        selectedVideoTrack = nil
+        selectedAudioTrack = nil
+        subscribedTrackIDs.removeAll()
+        setState(.idle)
     }
 
     /// Publishes application-owned camera frames without exposing the underlying
@@ -165,5 +197,73 @@ final class LinkConnectionController: ObservableObject {
         case .reconnecting: return "Reconnecting…"
         case .failed(let message): return message
         }
+    }
+
+    private func setState(_ newState: SessionState) {
+        state = newState
+        onSessionStateChanged?(newState)
+    }
+
+    private func receive(tracks: [RemoteMediaTrack]) {
+        remoteTracks = tracks.sorted(by: Self.trackOrder)
+
+        if let selectedVideoTrack,
+           !tracks.contains(where: { $0.selectionID == selectedVideoTrack && $0.kind == .camera }) {
+            self.selectedVideoTrack = nil
+        }
+        if self.selectedVideoTrack == nil {
+            self.selectedVideoTrack = remoteTracks.first(where: { $0.kind == .camera && !$0.isMuted })?.selectionID
+        }
+
+        let selectedParticipant = selectedVideoTrack?.participantID
+        if let selectedAudioTrack,
+           (!tracks.contains(where: { $0.selectionID == selectedAudioTrack && $0.kind == .microphone })
+            || selectedAudioTrack.participantID != selectedParticipant) {
+            self.selectedAudioTrack = nil
+        }
+        if self.selectedAudioTrack == nil, let selectedParticipant {
+            self.selectedAudioTrack = remoteTracks.first(where: {
+                $0.participantID == selectedParticipant && $0.kind == .microphone && !$0.isMuted
+            })?.selectionID
+        }
+
+        subscribeIfNeeded(to: selectedVideoTrack?.trackID)
+        subscribeIfNeeded(to: selectedAudioTrack?.trackID)
+    }
+
+    private var subscribedTrackIDs = Set<MediaTrackID>()
+
+    private func subscribeIfNeeded(to trackID: MediaTrackID?) {
+        guard let trackID, !subscribedTrackIDs.contains(trackID), let session else { return }
+        subscribedTrackIDs.insert(trackID)
+        Task { [weak self] in
+            do {
+                try await session.subscribe(to: trackID)
+            } catch {
+                await MainActor.run {
+                    guard let self else { return }
+                    self.subscribedTrackIDs.remove(trackID)
+                    self.setState(.failed(message: "Could not subscribe to remote media: \(error.localizedDescription)"))
+                }
+            }
+        }
+    }
+
+    private func receiveVideo(trackID: MediaTrackID, sampleBuffer: CMSampleBuffer) {
+        guard selectedVideoTrack?.trackID == trackID else { return }
+        onRemoteVideoFrame?(trackID, sampleBuffer)
+    }
+
+    private func receiveAudio(trackID: MediaTrackID, sampleBuffer: CMSampleBuffer) {
+        guard selectedAudioTrack?.trackID == trackID else { return }
+        onRemoteAudio?(trackID, sampleBuffer)
+    }
+
+    private static func trackOrder(_ lhs: RemoteMediaTrack, _ rhs: RemoteMediaTrack) -> Bool {
+        let nameOrder = lhs.participantName.localizedCaseInsensitiveCompare(rhs.participantName)
+        if nameOrder != .orderedSame { return nameOrder == .orderedAscending }
+        if lhs.participantID != rhs.participantID { return lhs.participantID.rawValue < rhs.participantID.rawValue }
+        if lhs.kind != rhs.kind { return lhs.kind.rawValue < rhs.kind.rawValue }
+        return lhs.id.rawValue < rhs.id.rawValue
     }
 }
