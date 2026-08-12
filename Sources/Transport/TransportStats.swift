@@ -6,17 +6,17 @@ import Foundation
 /// component (e.g., NDI exposes only `endToEndLatencyMs`). `jitterBufferMs` is the
 /// current jitter-buffer depth — a setting, not a latency — included separately so
 /// it isn't summed by mistake.
-struct TransportStats: Equatable {
-    let bitrateKbps: Double
-    let sendLatencyMs: Double?
-    let wireLatencyMs: Double?
-    let receiveLatencyMs: Double?
-    let endToEndLatencyMs: Double?
-    let jitterBufferMs: Double?
-    let framesDropped: UInt64
-    let cpuPercent: Double
+public struct TransportStats: Equatable {
+    public let bitrateKbps: Double
+    public let sendLatencyMs: Double?
+    public let wireLatencyMs: Double?
+    public let receiveLatencyMs: Double?
+    public let endToEndLatencyMs: Double?
+    public let jitterBufferMs: Double?
+    public let framesDropped: UInt64
+    public let cpuPercent: Double
 
-    init(bitrateKbps: Double,
+    public init(bitrateKbps: Double,
          sendLatencyMs: Double? = nil,
          wireLatencyMs: Double? = nil,
          receiveLatencyMs: Double? = nil,

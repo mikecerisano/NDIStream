@@ -6,20 +6,20 @@ import Foundation
 ///
 /// `accessToken` intentionally participates in neither Codable nor description so a
 /// caller cannot accidentally persist or log it with the rest of the configuration.
-struct SessionConfiguration: Equatable, Codable, CustomStringConvertible {
-    let serverURL: URL?
-    let roomName: String?
-    let displayName: String
-    let accessToken: String?
+public struct SessionConfiguration: Equatable, Codable, CustomStringConvertible {
+    public let serverURL: URL?
+    public let roomName: String?
+    public let displayName: String
+    public let accessToken: String?
 
-    init(serverURL: URL?, roomName: String?, displayName: String, accessToken: String?) {
+    public init(serverURL: URL?, roomName: String?, displayName: String, accessToken: String?) {
         self.serverURL = serverURL
         self.roomName = roomName
         self.displayName = displayName
         self.accessToken = accessToken
     }
 
-    static func ndi(displayName: String) -> SessionConfiguration {
+    public static func ndi(displayName: String) -> SessionConfiguration {
         SessionConfiguration(serverURL: nil, roomName: nil, displayName: displayName, accessToken: nil)
     }
 
@@ -29,7 +29,7 @@ struct SessionConfiguration: Equatable, Codable, CustomStringConvertible {
         case displayName
     }
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         serverURL = try container.decodeIfPresent(URL.self, forKey: .serverURL)
         roomName = try container.decodeIfPresent(String.self, forKey: .roomName)
@@ -37,53 +37,67 @@ struct SessionConfiguration: Equatable, Codable, CustomStringConvertible {
         accessToken = nil
     }
 
-    func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encodeIfPresent(serverURL, forKey: .serverURL)
         try container.encodeIfPresent(roomName, forKey: .roomName)
         try container.encode(displayName, forKey: .displayName)
     }
 
-    var description: String {
+    public var description: String {
         let server = serverURL?.absoluteString ?? "nil"
         let room = roomName ?? "nil"
         return "SessionConfiguration(serverURL: \(server), roomName: \(room), displayName: \(displayName), accessToken: <redacted>)"
     }
 }
 
-struct ParticipantID: Hashable, Codable {
-    let rawValue: String
+public struct ParticipantID: Hashable, Codable {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
 }
 
-struct MediaTrackID: Hashable, Codable {
-    let rawValue: String
+public struct MediaTrackID: Hashable, Codable {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
 }
 
-struct MediaTrackSelectionID: Hashable {
-    let participantID: ParticipantID
-    let trackID: MediaTrackID
+public struct MediaTrackSelectionID: Hashable {
+    public let participantID: ParticipantID
+    public let trackID: MediaTrackID
+    public init(participantID: ParticipantID, trackID: MediaTrackID) {
+        self.participantID = participantID
+        self.trackID = trackID
+    }
 }
 
-enum MediaTrackKind: String, Codable {
+public enum MediaTrackKind: String, Codable {
     case camera
     case microphone
     case screenShare
     case unknown
 }
 
-struct RemoteMediaTrack: Identifiable, Equatable {
-    let id: MediaTrackID
-    let participantID: ParticipantID
-    let participantName: String
-    let kind: MediaTrackKind
-    let isMuted: Bool
+public struct RemoteMediaTrack: Identifiable, Equatable {
+    public let id: MediaTrackID
+    public let participantID: ParticipantID
+    public let participantName: String
+    public let kind: MediaTrackKind
+    public let isMuted: Bool
 
-    var selectionID: MediaTrackSelectionID {
+    public init(id: MediaTrackID, participantID: ParticipantID, participantName: String, kind: MediaTrackKind, isMuted: Bool) {
+        self.id = id
+        self.participantID = participantID
+        self.participantName = participantName
+        self.kind = kind
+        self.isMuted = isMuted
+    }
+
+    public var selectionID: MediaTrackSelectionID {
         MediaTrackSelectionID(participantID: participantID, trackID: id)
     }
 }
 
-enum SessionState: Equatable {
+public enum SessionState: Equatable {
     case idle
     case connecting
     case connected
@@ -91,7 +105,7 @@ enum SessionState: Equatable {
     case failed(message: String)
 }
 
-protocol MediaSession: AnyObject {
+public protocol MediaSession: AnyObject {
     var state: SessionState { get }
     var remoteTracks: [RemoteMediaTrack] { get }
     var onStateChanged: ((SessionState) -> Void)? { get set }

@@ -7,3 +7,5 @@ xcuserdata/
 .swiftpm/
 release.sh
 .superpowers/
+.build-mobile/
+.deriveddata-*/

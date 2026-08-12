@@ -4,7 +4,7 @@ import Foundation
 
 /// Application-owned captured media that can feed preview, recorder, and transport
 /// without any consumer opening a second capture session.
-final class LocalMediaSource {
+public final class LocalMediaSource {
     struct VideoFrame {
         let pixelBuffer: CVPixelBuffer
         let presentationTime: CMTime
@@ -12,9 +12,9 @@ final class LocalMediaSource {
         let frameRateD: Int32
     }
 
-    final class Subscription {
-        struct Statistics: Equatable {
-            let droppedVideoFrames: UInt64
+    public final class Subscription {
+        public struct Statistics: Equatable {
+            public let droppedVideoFrames: UInt64
         }
 
         fileprivate let id = UUID()
@@ -39,13 +39,13 @@ final class LocalMediaSource {
             self.onAudioSampleBuffer = onAudioSampleBuffer
         }
 
-        var statistics: Statistics {
+        public var statistics: Statistics {
             lock.lock()
             defer { lock.unlock() }
             return Statistics(droppedVideoFrames: droppedVideoFrames)
         }
 
-        func cancel() {
+        public func cancel() {
             owner?.remove(id: id)
             owner = nil
         }
@@ -89,25 +89,10 @@ final class LocalMediaSource {
     private let lock = NSLock()
     private var subscriptions: [UUID: Subscription] = [:]
 
-    /// Installs this source as CameraManager's sole callback fan-out. Callers keep
-    /// using one capture session; preview remains driven by the capture session and
-    /// recorder/transport become ordinary source subscribers.
-    func attach(to cameraManager: CameraManager) {
-        cameraManager.onFrame = { [weak self] pixelBuffer, pts in
-            self?.emitVideo(pixelBuffer, presentationTime: pts)
-        }
-        cameraManager.onAudioSampleBuffer = { [weak self] sampleBuffer in
-            self?.emitAudio(sampleBuffer)
-        }
-    }
-
-    func detach(from cameraManager: CameraManager) {
-        cameraManager.onFrame = nil
-        cameraManager.onAudioSampleBuffer = nil
-    }
+    public init() {}
 
     @discardableResult
-    func subscribe(
+    public func subscribe(
         queue: DispatchQueue,
         onVideoFrame: @escaping (CVPixelBuffer, CMTime) -> Void,
         onAudioSampleBuffer: @escaping (CMSampleBuffer) -> Void
@@ -124,7 +109,7 @@ final class LocalMediaSource {
         return subscription
     }
 
-    func emitVideo(
+    public func emitVideo(
         _ pixelBuffer: CVPixelBuffer,
         presentationTime: CMTime,
         frameRateN: Int32 = 30,
@@ -139,7 +124,7 @@ final class LocalMediaSource {
         snapshot().forEach { $0.offer(video: frame) }
     }
 
-    func emitAudio(_ sampleBuffer: CMSampleBuffer) {
+    public func emitAudio(_ sampleBuffer: CMSampleBuffer) {
         snapshot().forEach { $0.offer(audio: sampleBuffer) }
     }
 

@@ -19,7 +19,7 @@ protocol LiveKitClient: AnyObject {
     var onStateChanged: ((LiveKitClientState) -> Void)? { get set }
     var onTracksChanged: (([LiveKitTrackDescriptor]) -> Void)? { get set }
     var onVideoFrame: ((_ trackID: String, _ pixelBuffer: CVPixelBuffer, _ presentationTime: CMTime) -> Void)? { get set }
-    var onAudioFrame: ((_ trackID: String, _ pcmBuffer: AVAudioPCMBuffer) -> Void)? { get set }
+    var onAudioFrame: (@Sendable (_ trackID: String, _ pcmBuffer: AVAudioPCMBuffer) -> Void)? { get set }
     func connect(serverURL: URL, token: String) async throws
     func publishCamera(firstFrame: CVPixelBuffer, presentationTime: CMTime) async throws
     func capture(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime)
@@ -30,7 +30,7 @@ protocol LiveKitClient: AnyObject {
 
 extension LiveKitClient {
     /// Optional for test doubles and adapters that do not expose subscribed audio.
-    var onAudioFrame: ((_ trackID: String, _ pcmBuffer: AVAudioPCMBuffer) -> Void)? {
+    var onAudioFrame: (@Sendable (_ trackID: String, _ pcmBuffer: AVAudioPCMBuffer) -> Void)? {
         get { nil }
         set { }
     }
@@ -42,10 +42,10 @@ extension LiveKitClient {
 /// this adapter forwards its buffers. LiveKit 2.16's public high-level microphone API
 /// owns network microphone capture when enabled. Source audio remains available to the
 /// app recorder and is not falsely reported as published by this adapter.
-final class LiveKitMediaSession: MediaSession {
-    enum ConfigurationError: Error, Equatable { case missingServerURL, missingAccessToken, unknownTrack }
-    enum AudioCaptureOwnership: Equatable { case liveKitSDK }
-    let audioCaptureOwnership: AudioCaptureOwnership = .liveKitSDK
+public final class LiveKitMediaSession: MediaSession {
+    public enum ConfigurationError: Error, Equatable { case missingServerURL, missingAccessToken, unknownTrack }
+    public enum AudioCaptureOwnership: Equatable { case liveKitSDK }
+    public let audioCaptureOwnership: AudioCaptureOwnership = .liveKitSDK
 
     private let client: LiveKitClient
     private let mediaQueue = DispatchQueue(label: "StageGlassLink.LiveKitMediaSession.Media", qos: .userInteractive)
@@ -59,20 +59,24 @@ final class LiveKitMediaSession: MediaSession {
     private var generation: UInt64 = 0
     private var remoteAudioPTS: [String: CMTime] = [:]
 
-    var onStateChanged: ((SessionState) -> Void)?
-    var onRemoteTracksChanged: (([RemoteMediaTrack]) -> Void)?
-    var onRemoteVideoFrame: ((MediaTrackID, CMSampleBuffer) -> Void)?
-    var onRemoteAudio: ((MediaTrackID, CMSampleBuffer) -> Void)?
+    public var onStateChanged: ((SessionState) -> Void)?
+    public var onRemoteTracksChanged: (([RemoteMediaTrack]) -> Void)?
+    public var onRemoteVideoFrame: ((MediaTrackID, CMSampleBuffer) -> Void)?
+    public var onRemoteAudio: ((MediaTrackID, CMSampleBuffer) -> Void)?
 
-    init(client: LiveKitClient = LiveKitSDKClient()) {
+    init(client: LiveKitClient) {
         self.client = client
         wireClientCallbacks()
     }
 
-    var state: SessionState { lock.withLock { storedState } }
-    var remoteTracks: [RemoteMediaTrack] { lock.withLock { storedRemoteTracks } }
+    public convenience init() {
+        self.init(client: LiveKitSDKClient())
+    }
 
-    func connect(configuration: SessionConfiguration) async throws {
+    public var state: SessionState { lock.withLock { storedState } }
+    public var remoteTracks: [RemoteMediaTrack] { lock.withLock { storedRemoteTracks } }
+
+    public func connect(configuration: SessionConfiguration) async throws {
         guard let serverURL = configuration.serverURL else { throw ConfigurationError.missingServerURL }
         guard let token = configuration.accessToken, !token.isEmpty else { throw ConfigurationError.missingAccessToken }
         let currentGeneration = lock.withLock { () -> UInt64 in
@@ -93,7 +97,7 @@ final class LiveKitMediaSession: MediaSession {
         }
     }
 
-    func publishCamera(_ source: LocalMediaSource) async throws {
+    public func publishCamera(_ source: LocalMediaSource) async throws {
         let currentGeneration = lock.withLock { generation }
         guard lock.withLock({ connected }) else {
             throw LiveKitSDKClient.ConnectionError(message: "Link is not connected.")
@@ -110,14 +114,14 @@ final class LiveKitMediaSession: MediaSession {
         )
     }
 
-    func setMicrophoneEnabled(_ enabled: Bool) async throws { try await client.setMicrophoneEnabled(enabled) }
+    public func setMicrophoneEnabled(_ enabled: Bool) async throws { try await client.setMicrophoneEnabled(enabled) }
 
-    func subscribe(to trackID: MediaTrackID) async throws {
+    public func subscribe(to trackID: MediaTrackID) async throws {
         guard remoteTracks.contains(where: { $0.id == trackID }) else { throw ConfigurationError.unknownTrack }
         try await client.subscribe(to: trackID.rawValue)
     }
 
-    func disconnect() async {
+    public func disconnect() async {
         sourceSubscription?.cancel()
         sourceSubscription = nil
         lock.withLock {
@@ -133,7 +137,7 @@ final class LiveKitMediaSession: MediaSession {
         notifyState(.idle)
     }
 
-    func currentStats() -> TransportStats? { nil }
+    public func currentStats() -> TransportStats? { nil }
 
     private func wireClientCallbacks() {
         client.onStateChanged = { [weak self] state in self?.receive(state) }
@@ -229,13 +233,13 @@ final class LiveKitMediaSession: MediaSession {
             guard let self else { return }
             do {
                 try await client.publishCamera(firstFrame: pixelBuffer, presentationTime: presentationTime)
-                lock.withLock {
-                    guard connected, generation == expectedGeneration else { return }
-                    cameraPublished = true
-                    cameraPublishInFlight = false
+                self.lock.withLock {
+                    guard self.connected, self.generation == expectedGeneration else { return }
+                    self.cameraPublished = true
+                    self.cameraPublishInFlight = false
                 }
             } catch {
-                lock.withLock { cameraPublishInFlight = false }
+                self.lock.withLock { self.cameraPublishInFlight = false }
                 guard isCurrent(expectedGeneration) else { return }
                 transition(to: .failed(message: Self.redactedCredentialDescription(String(describing: error))))
             }

@@ -1,10 +1,18 @@
-# NDIStream for iPad — Spec
+# StageGlass Link for Apple Mobile
 
-**Status:** future work. Not started.
+**Status:** receiver foundation implemented; app UI target still pending.
 
 **Why:** On a film set, the off-camera scene partner needs to see the on-camera actor (for fake-Zoom gags, video village, eyelines, playback proxies). Today that's a second MacBook. An iPad on a c-stand or magic-arm replaces the laptop — smaller, lighter, silent, ~10hr battery, easier to mount.
 
-**Scope:** **Receiver-only first.** Sender is deprioritized — the Mac has a better webcam, better networking, and no backgrounding restrictions. Maybe add sender later if we find a use case.
+**Scope:** **Receiver-first.** `StageGlassLinkCore` is now a Swift package that builds
+for iOS/iPadOS and macOS. It owns room connection, remote-track projection,
+deterministic camera selection, matching microphone selection, subscription, and
+rendering-facing `CMSampleBuffer` callbacks. It deliberately owns no capture graph.
+
+The existing macOS app keeps its single `CameraManager`; its adapter to
+`LocalMediaSource` remains outside the portable package. A mobile sender will receive
+the same explicit platform capture adapter later. Do not add a second camera session
+or enable LiveKit microphone capture alongside an application-owned microphone graph.
 
 ## Functional spec
 
@@ -18,7 +26,19 @@ Single-screen iPad app, landscape-first.
 - **Video area:** fills the rest of the screen. `AVSampleBufferDisplayLayer`. Black background. Letterboxed `.resizeAspect`.
 - **Lock-screen behavior:** keep screen awake while connected (`UIApplication.shared.isIdleTimerDisabled = true`). Release when disconnected.
 
-## Reused from macOS
+## Shared WebRTC foundation
+
+- Package product: `StageGlassLinkCore`
+- Minimum platforms: iOS/iPadOS 15, macOS 13
+- LiveKit Swift: pinned to 2.16.0
+- Primary mobile entry point: `LinkReceiverSession`
+- Callbacks: selected remote video and audio as `CMSampleBuffer`
+- Runtime token remains caller-provided and is never Codable
+
+The package is intentionally independent of NDI and AppKit. This gives iPhone and
+iPad the same room/track semantics without linking the macOS NDI runtime.
+
+## NDI-specific reuse (later, optional)
 
 Should port largely as-is:
 - `NDIFinder.h/.mm`, `NDIReceiver.h/.mm`, `NDIRuntime.h/.mm` — Obj-C++ wrappers, no UIKit/AppKit deps
@@ -53,9 +73,12 @@ Three options, in order of friction:
 - Multi-source view — would a 2×2 grid of small previews be useful (multi-cam village)? Probably yes, but separate spec.
 - Audio receive — current macOS app skips audio entirely. For an iPad on set, getting audio out of a wired headphone jack (via USB-C adapter) for the off-camera actor would be a real win. Separate small task.
 
-## Estimated effort
+## Next implementation slice
 
-~Half a day of focused work for a first runnable build, plus another half for polish (recording UX, share sheet, edge cases). The Obj-C++ NDI wrappers should port without changes. The Swift code is mostly subtractive (remove macOS window machinery, replace AppKit with UIKit equivalents).
+1. Add an iOS/iPadOS app target with a landscape receiver UI and sample-buffer display layer.
+2. Add audio monitoring and recording/share-sheet composition around the core callbacks.
+3. Exercise a real Mac-to-iPad LiveKit room on LAN.
+4. Add a mobile sender capture adapter only after choosing one explicit owner for both camera and microphone.
 
 ## Out of scope
 
