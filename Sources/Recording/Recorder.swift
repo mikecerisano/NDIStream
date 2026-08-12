@@ -14,6 +14,7 @@ final class Recorder: ObservableObject, @unchecked Sendable {
     private var audioInput: AVAssetWriterInput?
     private var adaptor: AVAssetWriterInputPixelBufferAdaptor?
     private let writeQueue = DispatchQueue(label: "NDIStream.Recorder.Write")
+    private let finalizationGroup = DispatchGroup()
     private var startPTS: CMTime?
     private var pendingVideo: PendingVideo?
     private var pendingAudioFormat: AudioTrackFormat?
@@ -204,6 +205,7 @@ final class Recorder: ObservableObject, @unchecked Sendable {
         setWriterActive(false)
         timer?.invalidate()
         timer = nil
+        finalizationGroup.enter()
         writeQueue.async { [weak self] in
             guard let self else { return }
             guard let w = self.writer else {
@@ -214,6 +216,7 @@ final class Recorder: ObservableObject, @unchecked Sendable {
                 self.releasePendingVideo()
                 self.pendingAudioFormat = nil
                 self.syntheticAudioPTS = nil
+                self.finalizationGroup.leave()
                 return
             }
             self.input?.markAsFinished()
@@ -223,6 +226,7 @@ final class Recorder: ObservableObject, @unchecked Sendable {
                     let msg = w.error?.localizedDescription ?? "Finalize failed"
                     Task { @MainActor in self.lastError = msg }
                 }
+                self.finalizationGroup.leave()
             }
             self.writer = nil
             self.input = nil
@@ -232,6 +236,14 @@ final class Recorder: ObservableObject, @unchecked Sendable {
             self.releasePendingVideo()
             self.pendingAudioFormat = nil
             self.syntheticAudioPTS = nil
+        }
+    }
+
+    @MainActor
+    func stopAndWait() async {
+        stop()
+        await withCheckedContinuation { continuation in
+            finalizationGroup.notify(queue: .main) { continuation.resume() }
         }
     }
 

@@ -5,6 +5,39 @@ import CoreVideo
 
 @MainActor
 final class LinkConnectionControllerTests: XCTestCase {
+    func testConfigurationUsesAndValidatesLiveKitTokenClaims() throws {
+        let token = makeUnsignedToken(payload: [
+            "sub": "camera-17",
+            "name": "Camera Seventeen",
+            "video": ["room": "stage-a"]
+        ])
+        let fields = LinkConnectionFields(serverURL: "wss://example.invalid",
+                                          roomName: "stage-a",
+                                          displayName: "camera-17",
+                                          accessToken: token)
+
+        let configuration = try fields.configuration()
+
+        XCTAssertEqual(configuration.roomName, "stage-a")
+        XCTAssertEqual(configuration.displayName, "Camera Seventeen")
+        XCTAssertEqual(configuration.accessToken, token)
+    }
+
+    func testConfigurationRejectsExpectedClaimsThatDoNotMatchToken() throws {
+        let token = makeUnsignedToken(payload: [
+            "sub": "camera-17",
+            "video": ["room": "stage-a"]
+        ])
+
+        XCTAssertThrowsError(try LinkConnectionFields(serverURL: "wss://example.invalid",
+                                                       roomName: "wrong-room",
+                                                       displayName: "camera-17",
+                                                       accessToken: token).configuration()) { error in
+            XCTAssertEqual(error.localizedDescription,
+                           "Expected room ‘wrong-room’ does not match token room ‘stage-a’.")
+        }
+    }
+
     func testTokenIsRuntimeOnlyAndClearedOnLeave() async {
         let suite = "LinkConnectionControllerTests.\(UUID())"
         let defaults = UserDefaults(suiteName: suite)!
@@ -233,6 +266,17 @@ final class LinkConnectionControllerTests: XCTestCase {
 
     private func settleCallbacks() async throws {
         try await Task.sleep(nanoseconds: 30_000_000)
+    }
+
+    private func makeUnsignedToken(payload: [String: Any]) -> String {
+        func segment(_ object: [String: Any]) -> String {
+            let data = try! JSONSerialization.data(withJSONObject: object)
+            return data.base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-")
+                .replacingOccurrences(of: "/", with: "_")
+                .replacingOccurrences(of: "=", with: "")
+        }
+        return "\(segment(["alg": "none"])).\(segment(payload)).signature"
     }
 }
 

@@ -12,6 +12,8 @@ enum LinkConnectionInputError: LocalizedError, Equatable {
     case missingDisplayName
     case missingAccessToken
     case sessionUnavailable
+    case expectedRoomMismatch(expected: String, token: String)
+    case expectedIdentityMismatch(expected: String, token: String)
 
     var errorDescription: String? {
         switch self {
@@ -20,6 +22,10 @@ enum LinkConnectionInputError: LocalizedError, Equatable {
         case .missingDisplayName: return "Enter a display name."
         case .missingAccessToken: return "Paste a short-lived access token."
         case .sessionUnavailable: return "Link is not available in this build."
+        case .expectedRoomMismatch(let expected, let token):
+            return "Expected room ‘\(expected)’ does not match token room ‘\(token)’."
+        case .expectedIdentityMismatch(let expected, let token):
+            return "Expected identity ‘\(expected)’ does not match token identity ‘\(token)’."
         }
     }
 }
@@ -59,7 +65,41 @@ struct LinkConnectionFields: Equatable {
         guard !name.isEmpty else { throw LinkConnectionInputError.missingDisplayName }
         let token = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty else { throw LinkConnectionInputError.missingAccessToken }
+        if let claims = LinkTokenClaims(token: token) {
+            if let tokenRoom = claims.room, tokenRoom != room {
+                throw LinkConnectionInputError.expectedRoomMismatch(expected: room, token: tokenRoom)
+            }
+            if let tokenIdentity = claims.identity, tokenIdentity != name {
+                throw LinkConnectionInputError.expectedIdentityMismatch(expected: name, token: tokenIdentity)
+            }
+            return SessionConfiguration(serverURL: url,
+                                        roomName: claims.room ?? room,
+                                        displayName: claims.displayName ?? claims.identity ?? name,
+                                        accessToken: token)
+        }
         return SessionConfiguration(serverURL: url, roomName: room, displayName: name, accessToken: token)
+    }
+}
+
+/// Non-verifying JWT claim inspection used only to prevent the operator UI from
+/// promising a room/identity different from the signed token. LiveKit remains
+/// responsible for signature and authorization validation at connection time.
+private struct LinkTokenClaims {
+    let identity: String?
+    let displayName: String?
+    let room: String?
+
+    init?(token: String) {
+        let segments = token.split(separator: ".", omittingEmptySubsequences: false)
+        guard segments.count >= 2 else { return nil }
+        var encoded = String(segments[1]).replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        encoded += String(repeating: "=", count: (4 - encoded.count % 4) % 4)
+        guard let data = Data(base64Encoded: encoded),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        identity = object["sub"] as? String
+        displayName = object["name"] as? String
+        room = (object["video"] as? [String: Any])?["room"] as? String
     }
 }
 

@@ -497,6 +497,26 @@ final class BroadcastController: ObservableObject {
         DebugLog.write("BroadcastController.stop completed")
     }
 
+    /// Deterministic process-lifecycle teardown. Unlike the ordinary Stop button,
+    /// this also leaves a joined-but-idle Link session before AppKit exits.
+    func shutdown() async {
+        if isBroadcasting { stop() }
+        await recorder.stopAndWait()
+        frameRepeater.stop()
+        frameWatchdog.stop()
+        linkMediaSource.detach(from: cameraManager)
+        linkRecorderSubscription?.cancel()
+        linkRecorderSubscription = nil
+        cameraManager.onAudioSampleBuffer = nil
+        cameraManager.onFrame = nil
+        cameraManager.stop()
+        let outgoing = currentSender()
+        setSender(nil)
+        outgoing?.stop()
+        await linkConnection.leave()
+        ActivityKeeper.end("broadcast")
+    }
+
     private func restartSender() {
         DebugLog.write("restartSender")
         guard transport == .ndi else {

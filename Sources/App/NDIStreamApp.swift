@@ -239,6 +239,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         false
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        DebugLog.write("application termination requested; draining active media")
+        Task { @MainActor [senderController, receiverModel] in
+            await senderController.shutdown()
+            await receiverModel.shutdown()
+            DebugLog.write("application media shutdown completed")
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     private func installMenu() {
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()
@@ -1091,12 +1102,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             field.widthAnchor.constraint(equalToConstant: 300).isActive = true
         }
         server.placeholderString = "wss://link.example.com"
-        room.placeholderString = "Room"
-        name.placeholderString = "Display name"
+        room.placeholderString = "Must match token room claim"
+        name.placeholderString = "Must match token identity claim"
         token.placeholderString = "Short-lived access token"
         stack.addArrangedSubview(labeledRow("Server", server))
-        stack.addArrangedSubview(labeledRow("Room", room))
-        stack.addArrangedSubview(labeledRow("Name", name))
+        stack.addArrangedSubview(labeledRow("Expected room", room))
+        stack.addArrangedSubview(labeledRow("Expected identity", name))
         stack.addArrangedSubview(labeledRow("Token", token))
         let actions = row()
         button.target = self

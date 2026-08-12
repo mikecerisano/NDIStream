@@ -197,6 +197,24 @@ final class ReceiverModel: NSObject, ObservableObject {
         DebugLog.write("receiver disconnected")
     }
 
+    /// Process-lifecycle teardown covering both selected and background transport
+    /// resources, including a Link room that was joined but never received media.
+    func shutdown() async {
+        await recorder.stopAndWait()
+        receiver?.delegate = nil
+        receiver?.stop()
+        receiver = nil
+        finders.forEach { $0.stop() }
+        audioPlayer.stop()
+        await linkConnection.leave()
+        isConnected = false
+        tally = .idle
+        ActivityKeeper.end("receiver")
+        ActivityKeeper.end("receiver-link")
+        displayLayer.flushAndRemoveImage()
+        lastFormat = nil
+    }
+
     private func wireLinkCallbacks() {
         linkConnection.onSessionStateChanged = { [weak self] state in
             guard let self, self.selectedTransport == .link else { return }
