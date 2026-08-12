@@ -225,7 +225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(NSMenuItem(title: "Quit NDIStream", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appMenu.addItem(NSMenuItem(title: "Quit StageGlass Link", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appItem.submenu = appMenu
         mainMenu.addItem(appItem)
 
@@ -297,7 +297,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func installStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "Stream"
-        statusItem.button?.toolTip = "NDIStream"
+        statusItem.button?.toolTip = "StageGlass Link"
 
         let menu = NSMenu()
         statusLineItem = NSMenuItem(title: "Idle", action: nil, keyEquivalent: "")
@@ -332,7 +332,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(logItem)
 
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit NDIStream", action: #selector(NSApplication.terminate(_:)), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Quit StageGlass Link", action: #selector(NSApplication.terminate(_:)), keyEquivalent: ""))
         menu.delegate = self
         statusItem.menu = menu
         DebugLog.write("status item installed")
@@ -349,7 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         content.spacing = 10
         content.edgeInsets = NSEdgeInsets(top: 16, left: 20, bottom: 16, right: 20)
 
-        senderTransportControl = NSSegmentedControl(labels: ["NDI", "QuicLink", "WarpStream"],
+        senderTransportControl = NSSegmentedControl(labels: LinkMode.releaseCapabilities.map(\.displayName),
                                                     trackingMode: .selectOne,
                                                     target: self,
                                                     action: #selector(senderTransportChanged))
@@ -360,22 +360,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ])
         senderTransportRow.spacing = 8
         content.addArrangedSubview(senderTransportRow)
-
-        senderRoomCodeLabel.font = NSFont.monospacedSystemFont(ofSize: 24, weight: .semibold)
-        senderRoomCodeLabel.stringValue = "—"
-        senderRoomCodeLabel.isSelectable = true
-        senderRoomCodeCopyButton.title = "Copy"
-        senderRoomCodeCopyButton.bezelStyle = .rounded
-        senderRoomCodeCopyButton.target = self
-        senderRoomCodeCopyButton.action = #selector(copySenderRoomCode)
-        senderRoomCodeContainer = NSStackView(views: [
-            NSTextField(labelWithString: "Room Code:"),
-            senderRoomCodeLabel,
-            senderRoomCodeCopyButton
-        ])
-        senderRoomCodeContainer.spacing = 8
-        senderRoomCodeContainer.isHidden = true   // shown only for WarpStream + broadcasting
-        content.addArrangedSubview(senderRoomCodeContainer)
 
         content.addArrangedSubview(sectionLabel("Camera"))
         senderCameraDropdown.target = self
@@ -484,7 +468,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusRow.addArrangedSubview(senderStatusLabel)
         content.addArrangedSubview(statusRow)
 
-        senderWindow = makeWindow(title: "NDIStream - Sender", content: content, size: NSSize(width: 440, height: 640))
+        senderWindow = makeWindow(title: "StageGlass Link — Sender", content: content, size: NSSize(width: 440, height: 640))
         senderWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         resizeSenderWindowToFitContent(animate: false)
     }
@@ -548,7 +532,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         receiverTopBar = topBar
         receiverBottomBar = bottomBar
 
-        receiverTransportControl = NSSegmentedControl(labels: ["NDI", "QuicLink", "WarpStream"],
+        receiverTransportControl = NSSegmentedControl(labels: LinkMode.releaseCapabilities.map(\.displayName),
                                                        trackingMode: .selectOne,
                                                        target: self,
                                                        action: #selector(receiverTransportChanged))
@@ -560,27 +544,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         receiverTransportRow.spacing = 8
         receiverTransportRow.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
 
-        receiverRoomCodeField.placeholderString = "ABC123"
-        receiverRoomCodeField.font = NSFont.monospacedSystemFont(ofSize: 16, weight: .regular)
-        receiverJoinByCodeButton.title = "Join"
-        receiverJoinByCodeButton.bezelStyle = .rounded
-        receiverJoinByCodeButton.target = self
-        receiverJoinByCodeButton.action = #selector(joinByRoomCode)
-        receiverRoomCodeContainer = NSStackView(views: [
-            NSTextField(labelWithString: "Or join by code:"),
-            receiverRoomCodeField,
-            receiverJoinByCodeButton
-        ])
-        receiverRoomCodeContainer.spacing = 8
-        receiverRoomCodeContainer.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 4, right: 10)
-        receiverRoomCodeContainer.isHidden = true   // shown only for .warpStream or .quicLink
-
         root.addArrangedSubview(topBar)
         root.addArrangedSubview(receiverTransportRow)
-        root.addArrangedSubview(receiverRoomCodeContainer)
         root.addArrangedSubview(bottomBar)
         root.addArrangedSubview(display)
-        receiverWindow = makeWindow(title: "NDIStream - Receiver", content: root, size: NSSize(width: 820, height: 540))
+        receiverWindow = makeWindow(title: "StageGlass Link — Receiver", content: root, size: NSSize(width: 820, height: 540))
         receiverWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         receiverWindow.level = .floating
         NotificationCenter.default.addObserver(self,
@@ -665,14 +633,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         senderStatusLabel.stringValue = senderStatusText
         senderStatusDot.layer?.backgroundColor = senderStatusColor.cgColor
         updateStatusMenu()
-        // WarpStream room code visibility — show only when broadcasting via WarpStream.
-        let showRoomCode = (senderController.transport == .warpStream && senderController.isBroadcasting)
-        senderRoomCodeContainer.isHidden = !showRoomCode
-        if showRoomCode {
-            senderRoomCodeLabel.stringValue = senderController.currentRoomCode ?? "—"
-        } else {
-            senderRoomCodeLabel.stringValue = "—"
-        }
         // Keep transport picker reflecting model state if it changed elsewhere.
         senderTransportControl.selectedSegment = AppDelegate.transportIndex(senderController.transport)
     }
@@ -697,8 +657,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         receiverAutoRecordCheckbox.isEnabled = !locked
         receiverAudioCheckbox.isEnabled = !locked
         receiverTransportControl.isEnabled = !locked
-        receiverRoomCodeField.isEnabled = !locked
-        receiverJoinByCodeButton.isEnabled = !locked && !receiverModel.isConnected
         receiverRecordButton.isEnabled = !locked && receiverModel.isConnected
         receiverRecordButton.title = receiverModel.recorder.isRecording ? "STOP REC" : "REC"
         receiverTimerLabel.stringValue = formatElapsed(receiverModel.recorder.elapsed)
@@ -706,10 +664,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         receiverLockButton.title = locked ? "🔒" : "🔓"
         receiverLockButton.toolTip = locked ? "Unlock controls" : "Lock controls (prevents accidental clicks)"
         updateStatusMenu()
-        // Show the room-code entry row for transports that support it.
-        let codeFieldVisible = (receiverModel.selectedTransport == .warpStream
-                                || receiverModel.selectedTransport == .quicLink)
-        receiverRoomCodeContainer.isHidden = !codeFieldVisible
         // Keep transport picker reflecting model state if it changed elsewhere.
         receiverTransportControl.selectedSegment = AppDelegate.transportIndex(receiverModel.selectedTransport)
     }
@@ -1083,22 +1037,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return String(format: "%02d:%02d", total / 60, total % 60)
     }
 
-    // MARK: Transport picker helpers (WarpStream integration)
+    // MARK: Release mode picker helpers
 
-    private static func transportIndex(_ t: VideoTransportKind) -> Int {
-        switch t {
-        case .ndi: return 0
-        case .quicLink: return 1
-        case .warpStream: return 2
-        }
+    private static func transportIndex(_ mode: LinkMode) -> Int {
+        LinkMode.releaseCapabilities.firstIndex(of: mode) ?? 0
     }
 
-    private static func transportFromIndex(_ i: Int) -> VideoTransportKind {
-        switch i {
-        case 1: return .quicLink
-        case 2: return .warpStream
-        default: return .ndi
-        }
+    private static func transportFromIndex(_ index: Int) -> LinkMode {
+        LinkMode.releaseCapabilities.indices.contains(index)
+            ? LinkMode.releaseCapabilities[index]
+            : .link
     }
 
     @objc private func senderTransportChanged() {
@@ -1112,20 +1060,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let new = AppDelegate.transportFromIndex(receiverTransportControl.selectedSegment)
         DebugLog.write("UI receiverTransportChanged -> \(new.rawValue)")
         receiverModel.selectedTransport = new
-        updateReceiverUI()
-    }
-
-    @objc private func copySenderRoomCode() {
-        let code = senderRoomCodeLabel.stringValue
-        guard code != "—" else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(code, forType: .string)
-        DebugLog.write("UI copied sender room code=\(code)")
-    }
-
-    @objc private func joinByRoomCode() {
-        let code = receiverRoomCodeField.stringValue
-        receiverModel.connectByRoomCode(code)
         updateReceiverUI()
     }
 

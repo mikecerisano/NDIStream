@@ -10,9 +10,9 @@ final class ReceiverModel: NSObject, ObservableObject {
 
     @Published var availableSources: [FoundSource] = []
     @Published var selectedSourceName: String = ""
-    @Published var selectedTransport: VideoTransportKind {
+    @Published var selectedTransport: LinkMode {
         didSet {
-            UserDefaults.standard.set(selectedTransport.rawValue, forKey: "receiverTransport")
+            UserDefaults.standard.set(selectedTransport.rawValue, forKey: "receiverLinkMode")
             // When transport changes, re-filter the visible source list and clear stale selection.
             refilterAndPublish()
             if !availableSources.contains(where: { $0.name == selectedSourceName }) {
@@ -65,8 +65,9 @@ final class ReceiverModel: NSObject, ObservableObject {
         DebugLog.write("ReceiverModel.init")
         self.finders = TransportFactory.makeFinders()
         // Default to .ndi on first launch, restore last-used otherwise (per spec §"UI changes").
-        let savedTransport = UserDefaults.standard.string(forKey: "receiverTransport")
-            .flatMap(VideoTransportKind.init(rawValue:)) ?? .ndi
+        let savedTransport = LinkMode.restored(from: .standard,
+                                               key: "receiverLinkMode",
+                                               legacyKey: "receiverTransport")
         self.selectedTransport = savedTransport
         super.init()
 
@@ -130,7 +131,7 @@ final class ReceiverModel: NSObject, ObservableObject {
     /// Publish the subset of `allSources` matching `selectedTransport`, sorted.
     private func refilterAndPublish() {
         let filtered = allSources.values
-            .filter { $0.transport == selectedTransport }
+            .filter { selectedTransport == .ndi && $0.transport == .ndi }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         availableSources = filtered
         DebugLog.write("receiver sources refilter transport=\(selectedTransport.rawValue) count=\(filtered.count) names=\(filtered.map { $0.name })")
@@ -168,46 +169,6 @@ final class ReceiverModel: NSObject, ObservableObject {
         DebugLog.write("receiver created name=\(source.name) address=\(source.address)")
         if autoRecord, !recorder.isRecording {
             DebugLog.write("auto-record start (receiver)")
-            recorder.start(slate: slate, includeAudio: true)
-        }
-    }
-
-    /// Manual room-code path. Synthesizes a `FoundSource` with `port == nil` so
-    /// `TransportFactory.makeReceiver` routes through `WarpStreamVideoReceiver(roomCode:)`.
-    /// Only meaningful when `selectedTransport == .warpStream` (or another transport
-    /// that supports room codes); other transports will get nil from the factory.
-    func connectByRoomCode(_ code: String) {
-        let trimmed = code.trimmingCharacters(in: .whitespaces).uppercased()
-        DebugLog.write("receiver connectByRoomCode requested code=\(trimmed) transport=\(selectedTransport.rawValue)")
-        guard !trimmed.isEmpty else {
-            statusLine = "Enter a room code"
-            return
-        }
-        guard !isConnected else { return }
-
-        let synthetic = FoundSource(name: "Code: \(trimmed)",
-                                    address: "",
-                                    transport: selectedTransport,
-                                    port: nil,
-                                    pinSHA256: nil,
-                                    roomCode: trimmed)
-        guard let r = TransportFactory.makeReceiver(for: synthetic) else {
-            DebugLog.write("ERROR connectByRoomCode receiver create failed transport=\(selectedTransport.rawValue) code=\(trimmed)")
-            statusLine = "Failed to connect with code \(trimmed)"
-            return
-        }
-        r.delegate = self
-        receiver = r
-        selectedSourceName = synthetic.name
-        isConnected = true
-        tally = .waiting
-        ActivityKeeper.begin("receiver")
-        statusLine = "Joining \(trimmed)…"
-        lastFormat = nil
-        receivedFrameCount = 0
-        DebugLog.write("receiver created via code transport=\(selectedTransport.rawValue) code=\(trimmed)")
-        if autoRecord, !recorder.isRecording {
-            DebugLog.write("auto-record start (receiver, code path)")
             recorder.start(slate: slate, includeAudio: true)
         }
     }

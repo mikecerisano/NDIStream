@@ -24,13 +24,13 @@ targets:
     info:
       path: Resources/Info.plist
       properties:
-        NSCameraUsageDescription: "NDIStream needs camera access to broadcast video over NDI."
-        NSMicrophoneUsageDescription: "NDIStream needs microphone access to send audio over NDI."
+        NSCameraUsageDescription: "StageGlass Link needs camera access to broadcast video."
+        NSMicrophoneUsageDescription: "StageGlass Link needs microphone access to send audio."
         NSHighResolutionCapable: true
         NSAppSleepDisabled: true
         LSMinimumSystemVersion: "13.0"
-        CFBundleName: NDIStream
-        CFBundleDisplayName: NDIStream
+        CFBundleName: StageGlass Link
+        CFBundleDisplayName: StageGlass Link
         CFBundleShortVersionString: "1.5.0"
         CFBundleVersion: "8"
         CFBundleIconFile: AppIcon

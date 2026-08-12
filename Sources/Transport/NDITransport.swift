@@ -97,41 +97,23 @@ final class NDISourceFinder: SourceFinder {
     }
 }
 
-/// Picks transport backends by kind. `.quicLink` and `.warpStream` are wired but
-/// return nil from sender/receiver until their adapters land.
+/// Release factory. Experimental transports cannot be selected or instantiated here.
 enum TransportFactory {
-    static func makeSender(transport: VideoTransportKind, sourceName: String,
+    static func makeSender(mode: LinkMode, sourceName: String,
                            clockVideo: Bool) -> VideoSender? {
-        switch transport {
+        switch mode {
         case .ndi: return NDIVideoSender(sourceName: sourceName, clockVideo: clockVideo)
-        case .quicLink: return nil
-        case .warpStream: return WarpStreamVideoSender(sourceName: sourceName, clockVideo: clockVideo)
+        case .link: return nil // LiveKit adapter lands in Phase 2.
         }
     }
 
     static func makeReceiver(for source: FoundSource) -> VideoReceiver? {
-        switch source.transport {
-        case .ndi:
-            return NDIVideoReceiver(sourceName: source.name, sourceAddress: source.address)
-        case .quicLink:
-            return nil
-        case .warpStream:
-            // Routing rule: room-code path (no port) vs Bonjour-discovered path.
-            // The stub adapter no-ops both; real impl arrives with WarpStream SDK.
-            if source.port == nil {
-                return WarpStreamVideoReceiver(roomCode: source.roomCode ?? "")
-            } else {
-                return WarpStreamVideoReceiver(discovered: source)
-            }
-        }
+        guard source.transport == .ndi else { return nil }
+        return NDIVideoReceiver(sourceName: source.name, sourceAddress: source.address)
     }
 
-    /// The finders the receiver should run. Today: NDI live; QuicLink + WarpStream
-    /// stubs return empty source lists.
+    /// NDI is the only release mode with LAN discovery.
     static func makeFinders() -> [SourceFinder] {
-        [
-            NDISourceFinder(),
-            WarpStreamSourceFinder(),
-        ]
+        [NDISourceFinder()]
     }
 }

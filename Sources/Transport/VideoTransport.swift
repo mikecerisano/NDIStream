@@ -2,7 +2,36 @@ import CoreMedia
 import CoreVideo
 import Foundation
 
-/// Which transport carries video/audio. Persisted as a raw string in UserDefaults.
+/// Product-facing release modes. Experimental transports intentionally never enter this type.
+enum LinkMode: String, CaseIterable {
+    case link
+    case ndi
+
+    static let releaseCapabilities: [LinkMode] = [.link, .ndi]
+
+    var displayName: String {
+        switch self {
+        case .link: return "Link"
+        case .ndi: return "NDI"
+        }
+    }
+
+    /// Reads the new key first, then the legacy transport key for one migration release.
+    /// QuicLink, WarpStream, unknown values, and a missing preference all settle on Link.
+    static func restored(from defaults: UserDefaults,
+                         key: String,
+                         legacyKey: String) -> LinkMode {
+        if let raw = defaults.string(forKey: key), let mode = LinkMode(rawValue: raw) {
+            return mode
+        }
+        if defaults.string(forKey: legacyKey) == VideoTransportKind.ndi.rawValue {
+            return .ndi
+        }
+        return .link
+    }
+}
+
+/// Legacy/internal transport identity retained while experimental source is archived.
 enum VideoTransportKind: String, CaseIterable {
     case ndi
     case quicLink

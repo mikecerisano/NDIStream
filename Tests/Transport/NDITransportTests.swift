@@ -3,11 +3,12 @@ import XCTest
 
 final class NDITransportTests: XCTestCase {
 
-    // MARK: VideoTransportKind
+    // MARK: Release capabilities
 
-    func testVideoTransportKindHasWarpStreamCase() {
-        XCTAssertEqual(VideoTransportKind.warpStream.rawValue, "warpStream")
-        XCTAssertTrue(VideoTransportKind.allCases.contains(.warpStream))
+    func testReleaseCapabilitiesContainExactlyLinkAndNDI() {
+        XCTAssertEqual(LinkMode.releaseCapabilities, [.link, .ndi])
+        XCTAssertEqual(LinkMode.allCases, [.link, .ndi])
+        XCTAssertEqual(LinkMode.releaseCapabilities.map(\.displayName), ["Link", "NDI"])
     }
 
     // MARK: FoundSource
@@ -69,43 +70,21 @@ final class NDITransportTests: XCTestCase {
 
     // MARK: Factory routing
 
-    func testFactoryReturnsNilForUnimplementedQuicLinkSender() {
-        let sender = TransportFactory.makeSender(transport: .quicLink,
+    func testFactoryReturnsNilForLinkUntilLiveKitAdapterLands() {
+        let sender = TransportFactory.makeSender(mode: .link,
                                                  sourceName: "X", clockVideo: false)
-        XCTAssertNil(sender, "QuicLink sender adapter not yet wired in NDIStream")
+        XCTAssertNil(sender)
     }
 
-    func testFactoryReturnsNilForQuicLinkReceiver() {
+    func testFactoryRejectsExperimentalReceiverSource() {
         let src = FoundSource(name: "X", address: "1.2.3.4", transport: .quicLink)
-        XCTAssertNil(TransportFactory.makeReceiver(for: src),
-                     "QuicLink receiver adapter not yet wired in NDIStream")
+        XCTAssertNil(TransportFactory.makeReceiver(for: src))
     }
 
-    func testFactoryReturnsStubForWarpStreamSender() {
-        let sender = TransportFactory.makeSender(transport: .warpStream,
-                                                 sourceName: "X", clockVideo: false)
-        // Stub returns a working no-op so the UI can be exercised end-to-end while
-        // WarpStream's SDK is unfinished. Once the real adapter lands, this assertion
-        // stays valid (a real sender is also non-nil).
-        XCTAssertNotNil(sender, "WarpStream stub should produce a no-op sender for UI smoke testing")
-        sender?.stop()
-    }
-
-    func testFactoryRoutesWarpStreamReceiverByPort() {
-        let discovered = FoundSource(name: "X", address: "10.0.0.5", transport: .warpStream,
-                                     port: 7000, pinSHA256: Data([1,2,3]), roomCode: "ABC123")
-        let manual = FoundSource(name: "Code: ABC123", address: "", transport: .warpStream,
-                                 port: nil, pinSHA256: nil, roomCode: "ABC123")
-        // Stub returns a no-op receiver for both routing paths. We're pinning that the
-        // factory routes both port-bearing and code-only FoundSources without crashing.
-        XCTAssertNotNil(TransportFactory.makeReceiver(for: discovered))
-        XCTAssertNotNil(TransportFactory.makeReceiver(for: manual))
-    }
-
-    func testMakeFindersIncludesNDIAndWarpStream() {
+    func testReleaseFactoryCreatesOnlyNDIFinder() {
         let finders = TransportFactory.makeFinders()
-        XCTAssertGreaterThanOrEqual(finders.count, 2,
-                                    "makeFinders should return at least NDI and WarpStream finders")
+        XCTAssertEqual(finders.count, 1)
+        XCTAssertTrue(finders[0] is NDISourceFinder)
     }
 
     func testWarpStreamFinderMappingSeam() {

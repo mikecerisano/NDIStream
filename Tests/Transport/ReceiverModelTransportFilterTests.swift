@@ -5,36 +5,39 @@ import XCTest
 final class ReceiverModelTransportFilterTests: XCTestCase {
 
     func testSelectedTransportPersistsToUserDefaults() {
+        UserDefaults.standard.removeObject(forKey: "receiverLinkMode")
         UserDefaults.standard.removeObject(forKey: "receiverTransport")
         let model = ReceiverModel()
-        XCTAssertEqual(model.selectedTransport, .ndi, "Default to .ndi on first launch")
-        model.selectedTransport = .warpStream
-        let stored = UserDefaults.standard.string(forKey: "receiverTransport")
-        XCTAssertEqual(stored, "warpStream")
+        XCTAssertEqual(model.selectedTransport, .link, "Link is the new default")
+        model.selectedTransport = .ndi
+        let stored = UserDefaults.standard.string(forKey: "receiverLinkMode")
+        XCTAssertEqual(stored, "ndi")
     }
 
-    func testSelectedTransportRestoresFromUserDefaults() {
+    func testLegacyWarpStreamMigratesToLink() {
+        UserDefaults.standard.removeObject(forKey: "receiverLinkMode")
         UserDefaults.standard.set("warpStream", forKey: "receiverTransport")
         let model = ReceiverModel()
-        XCTAssertEqual(model.selectedTransport, .warpStream)
+        XCTAssertEqual(model.selectedTransport, .link)
+        UserDefaults.standard.removeObject(forKey: "receiverLinkMode")
         UserDefaults.standard.removeObject(forKey: "receiverTransport")
     }
 
-    func testConnectByRoomCodeWithEmptyCodeReportsStatus() {
+    func testLegacyNDIRestoresAsNDI() {
+        UserDefaults.standard.removeObject(forKey: "receiverLinkMode")
+        UserDefaults.standard.set("ndi", forKey: "receiverTransport")
         let model = ReceiverModel()
-        model.connectByRoomCode("")
-        XCTAssertEqual(model.statusLine, "Enter a room code")
-        XCTAssertFalse(model.isConnected)
+        XCTAssertEqual(model.selectedTransport, .ndi)
+        UserDefaults.standard.removeObject(forKey: "receiverLinkMode")
+        UserDefaults.standard.removeObject(forKey: "receiverTransport")
     }
 
-    func testConnectByRoomCodeUppercasesAndTrims() {
+    func testNewModePreferenceWinsOverLegacyPreference() {
+        UserDefaults.standard.set("ndi", forKey: "receiverLinkMode")
+        UserDefaults.standard.set("warpStream", forKey: "receiverTransport")
         let model = ReceiverModel()
-        model.selectedTransport = .warpStream
-        // Stub adapter accepts and returns a no-op receiver; connection state should flip.
-        model.connectByRoomCode(" abc123 ")
-        // The stub WarpStreamVideoReceiver init returns a real instance, so:
-        XCTAssertTrue(model.isConnected)
-        XCTAssertEqual(model.selectedSourceName, "Code: ABC123")
-        model.disconnect()
+        XCTAssertEqual(model.selectedTransport, .ndi)
+        UserDefaults.standard.removeObject(forKey: "receiverLinkMode")
+        UserDefaults.standard.removeObject(forKey: "receiverTransport")
     }
 }

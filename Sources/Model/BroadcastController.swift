@@ -202,9 +202,9 @@ final class BroadcastController: ObservableObject {
             DebugLog.write("lowestLatency=\(lowestLatency) ndiInitialized=\(initialized) pendingRelaunch=\(lowestLatencyRelaunchRequired)")
         }
     }
-    @Published var transport: VideoTransportKind {
+    @Published var transport: LinkMode {
         didSet {
-            UserDefaults.standard.set(transport.rawValue, forKey: "senderTransport")
+            UserDefaults.standard.set(transport.rawValue, forKey: "senderLinkMode")
             if isBroadcasting { restartSender() }
         }
     }
@@ -239,15 +239,6 @@ final class BroadcastController: ObservableObject {
         let s = sender
         senderLock.unlock()
         return s
-    }
-
-    /// The active WarpStream sender's room code, if any. nil for other transports
-    /// or when not broadcasting. Reads from the underlying sender, not state.
-    var currentRoomCode: String? {
-        guard transport == .warpStream, let ws = currentSender() as? WarpStreamVideoSender else {
-            return nil
-        }
-        return ws.roomCode
     }
 
     /// The active sender (if broadcasting). Public reader so UI can read the
@@ -298,8 +289,9 @@ final class BroadcastController: ObservableObject {
         }
         self.slate = UserDefaults.standard.string(forKey: "senderSlate") ?? ""
         self.autoRecord = UserDefaults.standard.bool(forKey: "senderAutoRecord")
-        self.transport = UserDefaults.standard.string(forKey: "senderTransport")
-            .flatMap(VideoTransportKind.init(rawValue:)) ?? .ndi
+        self.transport = LinkMode.restored(from: .standard,
+                                           key: "senderLinkMode",
+                                           legacyKey: "senderTransport")
         cameraManager.setPixelFormat(pixelFormat)
         DebugLog.write("BroadcastController selectedCameraID=\(selectedCameraID) selectedAudioDeviceID=\(selectedAudioDeviceID) audioEnabled=\(audioEnabled) sourceName=\(sourceName) fps=\(targetFPS) quality=\(quality.rawValue) pixelFormat=\(pixelFormat.rawValue) smoothPacing=\(smoothPacing) lowestLatency=\(lowestLatency)")
     }
@@ -371,7 +363,7 @@ final class BroadcastController: ObservableObject {
                 return
             }
 
-            guard let s = TransportFactory.makeSender(transport: self.transport,
+            guard let s = TransportFactory.makeSender(mode: self.transport,
                                                       sourceName: self.sourceName,
                                                       clockVideo: self.smoothPacing) else {
                 DebugLog.write("ERROR sender create failed transport=\(self.transport.rawValue) sourceName=\(self.sourceName)")
@@ -461,7 +453,7 @@ final class BroadcastController: ObservableObject {
         let outgoing = currentSender()
         setSender(nil)
         outgoing?.stop()
-        let fresh = TransportFactory.makeSender(transport: transport,
+        let fresh = TransportFactory.makeSender(mode: transport,
                                                 sourceName: sourceName, clockVideo: smoothPacing)
         setSender(fresh)
         if fresh == nil {

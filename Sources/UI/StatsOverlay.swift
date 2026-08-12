@@ -11,11 +11,11 @@ final class StatsOverlay {
     private var timer: Timer?
     private weak var parentWindow: NSWindow?
     private let title: String
-    private let provider: () -> (transport: VideoTransportKind, stats: TransportStats?)
+    private let provider: () -> (transport: LinkMode, stats: TransportStats?)
 
     init(title: String,
          parent: NSWindow,
-         provider: @escaping () -> (transport: VideoTransportKind, stats: TransportStats?)) {
+         provider: @escaping () -> (transport: LinkMode, stats: TransportStats?)) {
         self.title = title
         self.parentWindow = parent
         self.provider = provider
