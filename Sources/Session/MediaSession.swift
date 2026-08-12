@@ -2,12 +2,6 @@ import CoreMedia
 import CoreVideo
 import Foundation
 
-/// Product-facing transports. SDK-specific transports must not leak into this list.
-enum LinkMode: String, CaseIterable, Codable {
-    case link
-    case ndi
-}
-
 /// Connection input shared by all media-session adapters.
 ///
 /// `accessToken` intentionally participates in neither Codable nor description so a

@@ -3,7 +3,7 @@ import CoreVideo
 import Foundation
 
 /// Product-facing release modes. Experimental transports intentionally never enter this type.
-enum LinkMode: String, CaseIterable {
+enum LinkMode: String, CaseIterable, Codable {
     case link
     case ndi
 
