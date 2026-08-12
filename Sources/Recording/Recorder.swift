@@ -205,9 +205,13 @@ final class Recorder: ObservableObject, @unchecked Sendable {
         setWriterActive(false)
         timer?.invalidate()
         timer = nil
+        let finalizationGroup = finalizationGroup
         finalizationGroup.enter()
         writeQueue.async { [weak self] in
-            guard let self else { return }
+            guard let self else {
+                finalizationGroup.leave()
+                return
+            }
             guard let w = self.writer else {
                 self.input = nil
                 self.audioInput = nil
