@@ -6,33 +6,10 @@ import LiveKit
 ///
 /// This client deliberately accepts the application's existing pixel buffers instead
 /// of asking LiveKit to open another camera capture session.
-final class LiveKitSDKClient: NSObject, @unchecked Sendable {
-    enum State: Equatable, Sendable {
-        case idle
-        case connecting
-        case connected
-        case reconnecting
-        case failed(String)
-    }
-
-    struct TrackDescriptor: Equatable, Sendable {
-        enum Kind: Equatable, Sendable {
-            case camera
-            case microphone
-            case screenShare
-            case unknown
-        }
-
-        let id: String
-        let participantID: String
-        let participantName: String
-        let kind: Kind
-        let isMuted: Bool
-    }
-
-    var onStateChanged: (@Sendable (State) -> Void)?
-    var onTracksChanged: (@Sendable ([TrackDescriptor]) -> Void)?
-    var onVideoFrame: (@Sendable (_ trackID: String, _ pixelBuffer: CVPixelBuffer, _ presentationTime: CMTime) -> Void)?
+final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
+    var onStateChanged: ((LiveKitClientState) -> Void)?
+    var onTracksChanged: (([LiveKitTrackDescriptor]) -> Void)?
+    var onVideoFrame: ((_ trackID: String, _ pixelBuffer: CVPixelBuffer, _ presentationTime: CMTime) -> Void)?
 
     private let room: Room
     private let lock = NSLock()
@@ -126,14 +103,14 @@ final class LiveKitSDKClient: NSObject, @unchecked Sendable {
             .first { $0.sid.stringValue == id }
     }
 
-    private func emit(_ state: State) {
+    private func emit(_ state: LiveKitClientState) {
         onStateChanged?(state)
     }
 
     private func emitTracks() {
         let tracks = room.remoteParticipants.values.flatMap { participant in
             participant.trackPublications.values.map { publication in
-                TrackDescriptor(
+                LiveKitTrackDescriptor(
                     id: publication.sid.stringValue,
                     participantID: participant.identity?.stringValue ?? participant.sid?.stringValue ?? "unknown",
                     participantName: participant.name ?? participant.identity?.stringValue ?? "Remote",
@@ -162,7 +139,7 @@ final class LiveKitSDKClient: NSObject, @unchecked Sendable {
         track.add(videoRenderer: renderer)
     }
 
-    private static func kind(for source: Track.Source) -> TrackDescriptor.Kind {
+    private static func kind(for source: Track.Source) -> LiveKitTrackDescriptor.Kind {
         switch source {
         case .camera: .camera
         case .microphone: .microphone
