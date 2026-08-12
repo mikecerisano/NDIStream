@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreMedia
 import CoreVideo
 import Foundation
@@ -18,6 +19,7 @@ protocol LiveKitClient: AnyObject {
     var onStateChanged: ((LiveKitClientState) -> Void)? { get set }
     var onTracksChanged: (([LiveKitTrackDescriptor]) -> Void)? { get set }
     var onVideoFrame: ((_ trackID: String, _ pixelBuffer: CVPixelBuffer, _ presentationTime: CMTime) -> Void)? { get set }
+    var onAudioFrame: ((_ trackID: String, _ pcmBuffer: AVAudioPCMBuffer) -> Void)? { get set }
     func connect(serverURL: URL, token: String) async throws
     func publishCamera(firstFrame: CVPixelBuffer, presentationTime: CMTime) async throws
     func capture(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime)
@@ -47,6 +49,7 @@ final class LiveKitMediaSession: MediaSession {
     private var cameraPublished = false
     private var cameraPublishInFlight = false
     private var generation: UInt64 = 0
+    private var remoteAudioPTS: [String: CMTime] = [:]
 
     var onStateChanged: ((SessionState) -> Void)?
     var onRemoteTracksChanged: (([RemoteMediaTrack]) -> Void)?
@@ -130,6 +133,9 @@ final class LiveKitMediaSession: MediaSession {
         client.onVideoFrame = { [weak self] id, pixelBuffer, pts in
             self?.receiveVideo(trackID: id, pixelBuffer: pixelBuffer, presentationTime: pts)
         }
+        client.onAudioFrame = { [weak self] id, buffer in
+            self?.receiveAudio(trackID: id, buffer: buffer)
+        }
     }
 
     private func receive(_ clientState: LiveKitClientState) {
@@ -165,6 +171,36 @@ final class LiveKitMediaSession: MediaSession {
         else { return }
         DispatchQueue.main.async { [weak self] in
             self?.onRemoteVideoFrame?(MediaTrackID(rawValue: trackID), sampleBuffer)
+        }
+    }
+
+    private func receiveAudio(trackID: String, buffer: AVAudioPCMBuffer) {
+        guard lock.withLock({ connected }),
+              let channels = buffer.floatChannelData,
+              buffer.format.channelCount > 0,
+              buffer.frameLength > 0 else { return }
+        let channelCount = Int(buffer.format.channelCount)
+        let frameCount = Int(buffer.frameLength)
+        var interleaved = [Float](repeating: 0, count: channelCount * frameCount)
+        for channel in 0..<channelCount {
+            for frame in 0..<frameCount {
+                interleaved[frame * channelCount + channel] = channels[channel][frame]
+            }
+        }
+        let sampleRate = Int32(buffer.format.sampleRate.rounded())
+        let pts = lock.withLock { () -> CMTime in
+            let current = remoteAudioPTS[trackID] ?? .zero
+            remoteAudioPTS[trackID] = CMTimeAdd(current, CMTime(value: CMTimeValue(frameCount), timescale: sampleRate))
+            return current
+        }
+        guard let sampleBuffer = AudioSampleBufferFactory.makeInterleavedFloat(
+            samples: interleaved,
+            sampleRate: sampleRate,
+            channels: Int32(channelCount),
+            presentationTime: pts
+        ) else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.onRemoteAudio?(MediaTrackID(rawValue: trackID), sampleBuffer)
         }
     }
 
