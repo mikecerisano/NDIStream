@@ -224,6 +224,9 @@ final class BroadcastController: ObservableObject {
 
     let cameraManager = CameraManager()
     let recorder = Recorder(filenamePrefix: "Sender")
+    private let linkMediaSource = LocalMediaSource()
+    private let linkRecorderQueue = DispatchQueue(label: "StageGlassLink.BroadcastRecorder", qos: .userInteractive)
+    private var linkRecorderSubscription: LocalMediaSource.Subscription?
     private var sender: VideoSender?
     private let senderLock = NSLock()
     private let frameWatchdog = SenderFrameWatchdog()
@@ -328,6 +331,11 @@ final class BroadcastController: ObservableObject {
         isTransitioning = true
 
         Task {
+            if self.transport == .link, !self.linkConnection.isJoined {
+                self.status = .error("Join a Link session before starting the camera.")
+                self.isTransitioning = false
+                return
+            }
             let granted = await CameraManager.requestAccess()
             guard granted else {
                 DebugLog.write("ERROR camera permission denied")
@@ -369,57 +377,84 @@ final class BroadcastController: ObservableObject {
                 return
             }
 
-            guard let s = TransportFactory.makeSender(mode: self.transport,
-                                                      sourceName: self.sourceName,
-                                                      clockVideo: self.smoothPacing) else {
-                DebugLog.write("ERROR sender create failed transport=\(self.transport.rawValue) sourceName=\(self.sourceName)")
-                self.status = .error("Failed to create \(self.transport.rawValue) sender.")
-                self.isTransitioning = false
-                return
-            }
-            DebugLog.write("sender created transport=\(self.transport.rawValue) sourceName=\(self.sourceName) clockVideo=\(self.smoothPacing)")
-            self.setSender(s)
-            if self.audioEnabled {
-                self.cameraManager.onAudioSampleBuffer = { [weak self] sampleBuffer in
-                    guard let self else { return }
-                    self.currentSender()?.sendAudio(sampleBuffer)
-                    self.recorder.appendAudio(sampleBuffer: sampleBuffer)
-                }
-                DebugLog.write("sender audio enabled device=\(audioDevice?.localizedName ?? "unknown")")
-            } else {
-                self.cameraManager.onAudioSampleBuffer = nil
-                DebugLog.write("sender audio disabled")
-            }
-
             let fpsN = Int32(self.targetFPS * 1000)
             let fpsD: Int32 = 1000
             let rec = self.recorder
             let watchdog = self.frameWatchdog
             let repeater = self.frameRepeater
             var sentFrameCount = 0
-            self.cameraManager.onFrame = { [weak self] pb, pts in
-                guard let self else { return }
-                watchdog.markFrame()
-                repeater.markRealFrame()
-                if let snd = self.currentSender() {
-                    sentFrameCount += 1
-                    if sentFrameCount == 1 || sentFrameCount % 60 == 0 {
-                        DebugLog.write("sender onFrame \(sentFrameCount) \(CVPixelBufferGetWidth(pb))x\(CVPixelBufferGetHeight(pb)) pf=\(CVPixelBufferGetPixelFormatType(pb)) pts=\(pts.seconds)")
-                    }
-                    snd.send(pixelBuffer: pb, frameRateN: fpsN, frameRateD: fpsD)
-                } else {
-                    DebugLog.write("WARN onFrame with nil sender")
+            switch self.transport {
+            case .link:
+                do {
+                    try await self.linkConnection.publishCamera(self.linkMediaSource)
+                    try await self.linkConnection.setMicrophoneEnabled(self.audioEnabled)
+                } catch {
+                    DebugLog.write("ERROR Link publisher start failed \(error.localizedDescription)")
+                    self.status = .error(error.localizedDescription)
+                    self.isTransitioning = false
+                    return
                 }
-                self.observeDimensionsIfNeeded(pb)
-                rec.append(pixelBuffer: pb, pts: pts)
+                self.linkRecorderSubscription = self.linkMediaSource.subscribe(
+                    queue: self.linkRecorderQueue,
+                    onVideoFrame: { [weak self] pixelBuffer, pts in
+                        guard let self else { return }
+                        watchdog.markFrame()
+                        self.observeDimensionsIfNeeded(pixelBuffer)
+                        rec.append(pixelBuffer: pixelBuffer, pts: pts)
+                    },
+                    onAudioSampleBuffer: { sampleBuffer in
+                        rec.appendAudio(sampleBuffer: sampleBuffer)
+                    }
+                )
+                self.linkMediaSource.attach(to: self.cameraManager)
+                DebugLog.write("Link publisher ready sdkMicrophone=\(self.audioEnabled) localRecorderAudio=\(self.audioEnabled)")
+
+            case .ndi:
+                guard let s = TransportFactory.makeSender(mode: self.transport,
+                                                          sourceName: self.sourceName,
+                                                          clockVideo: self.smoothPacing) else {
+                    DebugLog.write("ERROR sender create failed transport=\(self.transport.rawValue) sourceName=\(self.sourceName)")
+                    self.status = .error("Failed to create \(self.transport.rawValue) sender.")
+                    self.isTransitioning = false
+                    return
+                }
+                DebugLog.write("sender created transport=\(self.transport.rawValue) sourceName=\(self.sourceName) clockVideo=\(self.smoothPacing)")
+                self.setSender(s)
+                if self.audioEnabled {
+                    self.cameraManager.onAudioSampleBuffer = { [weak self] sampleBuffer in
+                        guard let self else { return }
+                        self.currentSender()?.sendAudio(sampleBuffer)
+                        self.recorder.appendAudio(sampleBuffer: sampleBuffer)
+                    }
+                    DebugLog.write("sender audio enabled device=\(audioDevice?.localizedName ?? "unknown")")
+                } else {
+                    self.cameraManager.onAudioSampleBuffer = nil
+                    DebugLog.write("sender audio disabled")
+                }
+                self.cameraManager.onFrame = { [weak self] pb, pts in
+                    guard let self else { return }
+                    watchdog.markFrame()
+                    repeater.markRealFrame()
+                    if let snd = self.currentSender() {
+                        sentFrameCount += 1
+                        if sentFrameCount == 1 || sentFrameCount % 60 == 0 {
+                            DebugLog.write("sender onFrame \(sentFrameCount) \(CVPixelBufferGetWidth(pb))x\(CVPixelBufferGetHeight(pb)) pf=\(CVPixelBufferGetPixelFormatType(pb)) pts=\(pts.seconds)")
+                        }
+                        snd.send(pixelBuffer: pb, frameRateN: fpsN, frameRateD: fpsD)
+                    } else {
+                        DebugLog.write("WARN onFrame with nil sender")
+                    }
+                    self.observeDimensionsIfNeeded(pb)
+                    rec.append(pixelBuffer: pb, pts: pts)
+                }
+                self.frameRepeater.start { [weak self] in
+                    guard let self, let snd = self.currentSender() else { return }
+                    snd.repeatLastFrame(frameRateN: fpsN, frameRateD: fpsD)
+                }
             }
 
             self.frameWatchdog.start { count, elapsed in
                 DebugLog.write("sender watchdog stall observed count=\(count) elapsed=\(String(format: "%.2f", elapsed)); capture session left running")
-            }
-            self.frameRepeater.start { [weak self] in
-                guard let self, let snd = self.currentSender() else { return }
-                snd.repeatLastFrame(frameRateN: fpsN, frameRateD: fpsD)
             }
             self.cameraManager.start()
             self.isBroadcasting = true
@@ -441,6 +476,14 @@ final class BroadcastController: ObservableObject {
         if recorder.isRecording { recorder.stop() }
         frameRepeater.stop()
         frameWatchdog.stop()
+        linkMediaSource.detach(from: cameraManager)
+        linkRecorderSubscription?.cancel()
+        linkRecorderSubscription = nil
+        if transport == .link {
+            Task { [linkConnection] in
+                try? await linkConnection.setMicrophoneEnabled(false)
+            }
+        }
         cameraManager.onAudioSampleBuffer = nil
         cameraManager.onFrame = nil
         cameraManager.stop()
@@ -456,6 +499,10 @@ final class BroadcastController: ObservableObject {
 
     private func restartSender() {
         DebugLog.write("restartSender")
+        guard transport == .ndi else {
+            DebugLog.write("restartSender ignored for Link; the joined session owns publication")
+            return
+        }
         let outgoing = currentSender()
         setSender(nil)
         outgoing?.stop()

@@ -23,6 +23,20 @@ enum LinkConnectionInputError: LocalizedError, Equatable {
     }
 }
 
+enum LinkConnectionRuntimeError: LocalizedError, Equatable {
+    case cameraRequiresJoinedSession
+    case microphoneRequiresJoinedSession
+
+    var errorDescription: String? {
+        switch self {
+        case .cameraRequiresJoinedSession:
+            return "Join a Link session before starting the camera."
+        case .microphoneRequiresJoinedSession:
+            return "Join a Link session before changing the microphone."
+        }
+    }
+}
+
 struct LinkConnectionFields: Equatable {
     var serverURL: String
     var roomName: String
@@ -79,7 +93,15 @@ final class LinkConnectionController: ObservableObject {
     }
 
     func join() async {
-        guard session == nil else { return }
+        if let previous = session {
+            switch state {
+            case .failed, .idle:
+                session = nil
+                await previous.disconnect()
+            case .connecting, .connected, .reconnecting:
+                return
+            }
+        }
         do {
             let configuration = try LinkConnectionFields(
                 serverURL: serverURL,
@@ -90,8 +112,11 @@ final class LinkConnectionController: ObservableObject {
             guard let makeSession else { throw LinkConnectionInputError.sessionUnavailable }
             let created = makeSession()
             session = created
-            created.onStateChanged = { [weak self] newState in
-                Task { @MainActor in self?.state = newState }
+            created.onStateChanged = { [weak self, weak created] newState in
+                Task { @MainActor in
+                    guard let self, let created, self.session === created else { return }
+                    self.state = newState
+                }
             }
             state = .connecting
             try await created.connect(configuration: configuration)
@@ -99,7 +124,9 @@ final class LinkConnectionController: ObservableObject {
             // complete connect before dispatching their notification.
             state = created.state == .connecting ? .connected : created.state
         } catch {
+            let failed = session
             session = nil
+            await failed?.disconnect()
             state = .failed(message: error.localizedDescription)
         }
     }
@@ -110,6 +137,24 @@ final class LinkConnectionController: ObservableObject {
         await current?.disconnect()
         accessToken = ""
         state = .idle
+    }
+
+    /// Publishes application-owned camera frames without exposing the underlying
+    /// session (or any LiveKit type) to the broadcast model.
+    func publishCamera(_ source: LocalMediaSource) async throws {
+        guard isJoined, let session else {
+            throw LinkConnectionRuntimeError.cameraRequiresJoinedSession
+        }
+        try await session.publishCamera(source)
+    }
+
+    /// Applies the Link microphone policy. The LiveKit adapter owns network mic
+    /// capture; CameraManager remains available independently for local recording.
+    func setMicrophoneEnabled(_ enabled: Bool) async throws {
+        guard isJoined, let session else {
+            throw LinkConnectionRuntimeError.microphoneRequiresJoinedSession
+        }
+        try await session.setMicrophoneEnabled(enabled)
     }
 
     var statusText: String {
