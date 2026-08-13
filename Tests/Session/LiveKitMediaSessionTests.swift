@@ -44,7 +44,7 @@ final class LiveKitMediaSessionTests: XCTestCase {
         XCTAssertTrue(message.contains("<redacted>"))
     }
 
-    func testPublishCameraUsesApplicationOwnedFramesAndDoesNotForwardSourceAudio() async throws {
+    func testPublishCameraUsesApplicationOwnedVideoAndAudioWithoutSDKCaptureGraph() async throws {
         let client = LiveKitClientSpy()
         let session = LiveKitMediaSession(client: client)
         let source = LocalMediaSource()
@@ -56,8 +56,8 @@ final class LiveKitMediaSessionTests: XCTestCase {
 
         await fulfillment(of: [client.firstFramePublished], timeout: 2)
         XCTAssertEqual(client.publishedFrameTimes, [CMTime(value: 2, timescale: 30)])
-        XCTAssertEqual(session.audioCaptureOwnership, .liveKitSDK)
-        XCTAssertEqual(client.customAudioFrames, 0)
+        XCTAssertEqual(session.audioCaptureOwnership, .application)
+        XCTAssertEqual(client.customAudioFrames, 1)
 
         try await session.setMicrophoneEnabled(true)
         XCTAssertEqual(client.microphoneValues, [true])
@@ -134,6 +134,7 @@ private final class LiveKitClientSpy: LiveKitClient {
     var onStateChanged: ((LiveKitClientState) -> Void)?
     var onTracksChanged: (([LiveKitTrackDescriptor]) -> Void)?
     var onVideoFrame: ((_ trackID: String, _ pixelBuffer: CVPixelBuffer, _ presentationTime: CMTime) -> Void)?
+    var onAudioFrame: (@Sendable (_ trackID: String, _ pcmBuffer: AVAudioPCMBuffer) -> Void)?
 
     let firstFramePublished = XCTestExpectation(description: "first frame published")
     var connectedURL: URL?
@@ -157,6 +158,8 @@ private final class LiveKitClientSpy: LiveKitClient {
     func capture(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
         publishedFrameTimes.append(presentationTime)
     }
+
+    func captureAudio(_ sampleBuffer: CMSampleBuffer) { customAudioFrames += 1 }
 
     func setMicrophoneEnabled(_ enabled: Bool) async throws { microphoneValues.append(enabled) }
     func subscribe(to trackID: String) async throws { subscribedTrackIDs.append(trackID) }

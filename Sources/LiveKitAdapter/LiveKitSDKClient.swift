@@ -29,6 +29,8 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
     private var audioRenderers: [String: PCMBufferRenderer] = [:]
     private let microphoneCaptureOwnership: MicrophoneCaptureOwnership
 
+    var usesSDKMicrophoneCapture: Bool { microphoneCaptureOwnership == .liveKit }
+
     init(microphoneCaptureOwnership: MicrophoneCaptureOwnership = .application) {
         self.microphoneCaptureOwnership = microphoneCaptureOwnership
         room = Room()
@@ -80,9 +82,19 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
         cameraCapturer?.capture(pixelBuffer, timeStampNs: Self.nanoseconds(for: presentationTime))
     }
 
+    func captureAudio(_ sampleBuffer: CMSampleBuffer) {
+        guard microphoneCaptureOwnership == .application,
+              let buffer = Self.makePCMBuffer(from: sampleBuffer) else { return }
+        AudioManager.shared.mixer.capture(appAudio: buffer)
+    }
+
     func setMicrophoneEnabled(_ enabled: Bool) async throws {
-        if enabled, microphoneCaptureOwnership == .application {
-            throw ConnectionError(message: Self.externalMicrophoneCaptureMessage)
+        if microphoneCaptureOwnership == .application {
+            if enabled {
+                try AudioManager.shared.setManualRenderingMode(true)
+            }
+            try await room.localParticipant.setMicrophone(enabled: enabled)
+            return
         }
         try await room.localParticipant.setMicrophone(enabled: enabled)
     }
@@ -112,9 +124,6 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
         guard !token.isEmpty else { return raw }
         return raw.replacingOccurrences(of: token, with: "<redacted>")
     }
-
-    static let externalMicrophoneCaptureMessage =
-        "Microphone publishing is unavailable while StageGlass Link owns capture. LiveKit Swift 2.16 cannot accept the existing microphone buffers without opening a second capture graph."
 
     private func remotePublication(withID id: String) -> RemoteTrackPublication? {
         room.remoteParticipants.values
@@ -182,6 +191,48 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
     private static func nanoseconds(for time: CMTime) -> Int64 {
         guard time.isNumeric else { return VideoCapturer.createTimeStampNs() }
         return Int64((time.seconds * 1_000_000_000).rounded())
+    }
+
+    private static func makePCMBuffer(from sampleBuffer: CMSampleBuffer) -> AVAudioPCMBuffer? {
+        guard let description = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(description),
+              asbd.pointee.mFormatID == kAudioFormatLinearPCM,
+              asbd.pointee.mFormatFlags & kAudioFormatFlagIsFloat != 0,
+              asbd.pointee.mBitsPerChannel == 32,
+              let dataBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return nil }
+
+        let frames = CMSampleBufferGetNumSamples(sampleBuffer)
+        let channels = Int(asbd.pointee.mChannelsPerFrame)
+        guard frames > 0, channels > 0 else { return nil }
+        let interleaved = asbd.pointee.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0
+        guard interleaved else { return nil }
+        guard let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: asbd.pointee.mSampleRate,
+            channels: AVAudioChannelCount(channels),
+            interleaved: interleaved
+        ), let buffer = AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: AVAudioFrameCount(frames)
+        ) else { return nil }
+        buffer.frameLength = AVAudioFrameCount(frames)
+
+        var length = 0
+        var pointer: UnsafeMutablePointer<Int8>?
+        guard CMBlockBufferGetDataPointer(
+            dataBuffer,
+            atOffset: 0,
+            lengthAtOffsetOut: nil,
+            totalLengthOut: &length,
+            dataPointerOut: &pointer
+        ) == noErr, let pointer else { return nil }
+        let bytes = min(length, frames * channels * MemoryLayout<Float>.size)
+        if let destination = buffer.mutableAudioBufferList.pointee.mBuffers.mData {
+            memcpy(destination, pointer, bytes)
+            buffer.mutableAudioBufferList.pointee.mBuffers.mDataByteSize = UInt32(bytes)
+            return buffer
+        }
+        return nil
     }
 }
 

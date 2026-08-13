@@ -23,6 +23,7 @@ protocol LiveKitClient: AnyObject {
     func connect(serverURL: URL, token: String) async throws
     func publishCamera(firstFrame: CVPixelBuffer, presentationTime: CMTime) async throws
     func capture(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime)
+    func captureAudio(_ sampleBuffer: CMSampleBuffer)
     func setMicrophoneEnabled(_ enabled: Bool) async throws
     func subscribe(to trackID: String) async throws
     func disconnect() async
@@ -39,13 +40,13 @@ extension LiveKitClient {
 /// LiveKit implementation of the product-owned media-session contract.
 ///
 /// Video stays application-owned: `CameraManager` feeds one `LocalMediaSource`, and
-/// this adapter forwards its buffers. LiveKit 2.16's public high-level microphone API
-/// owns network microphone capture when enabled. Source audio remains available to the
-/// app recorder and is not falsely reported as published by this adapter.
+/// this adapter forwards its buffers. Application-owned microphone buffers are injected
+/// through LiveKit's manual audio rendering input, so the SDK never opens a competing
+/// microphone graph.
 public final class LiveKitMediaSession: MediaSession {
     public enum ConfigurationError: Error, Equatable { case missingServerURL, missingAccessToken, unknownTrack }
-    public enum AudioCaptureOwnership: Equatable { case liveKitSDK }
-    public let audioCaptureOwnership: AudioCaptureOwnership = .liveKitSDK
+    public enum AudioCaptureOwnership: Equatable { case application }
+    public let audioCaptureOwnership: AudioCaptureOwnership = .application
 
     private let client: LiveKitClient
     private let mediaQueue = DispatchQueue(label: "StageGlassLink.LiveKitMediaSession.Media", qos: .userInteractive)
@@ -108,8 +109,8 @@ public final class LiveKitMediaSession: MediaSession {
             onVideoFrame: { [weak self] pixelBuffer, pts in
                 self?.publish(pixelBuffer, presentationTime: pts, generation: currentGeneration)
             },
-            onAudioSampleBuffer: { _ in
-                // Recorder consumes source audio; LiveKit SDK owns network mic capture.
+            onAudioSampleBuffer: { [weak self] sampleBuffer in
+                self?.client.captureAudio(sampleBuffer)
             }
         )
     }

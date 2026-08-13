@@ -21,17 +21,9 @@ final class LiveKitSDKClientTests: XCTestCase {
         XCTAssertTrue(message.contains("<redacted>"))
     }
 
-    func testApplicationOwnedCaptureRejectsSecondLiveKitMicrophoneGraph() async {
+    func testApplicationOwnedCaptureEnablesManualAudioWithoutSecondMicrophoneGraph() async throws {
         let client = LiveKitSDKClient(microphoneCaptureOwnership: .application)
-
-        do {
-            try await client.setMicrophoneEnabled(true)
-            XCTFail("Expected single-owner capture policy to reject LiveKit microphone capture")
-        } catch let error as LiveKitSDKClient.ConnectionError {
-            XCTAssertEqual(error.message, LiveKitSDKClient.externalMicrophoneCaptureMessage)
-            XCTAssertTrue(error.message.contains("second capture graph"))
-        } catch {
-            XCTFail("Unexpected error: \(error)")
-        }
+        XCTAssertEqual(client.microphoneCaptureOwnership, .application)
+        XCTAssertFalse(client.usesSDKMicrophoneCapture)
     }
 }

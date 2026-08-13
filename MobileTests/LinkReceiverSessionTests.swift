@@ -1,9 +1,26 @@
+import AVFoundation
 import CoreMedia
 import XCTest
 @testable import StageGlassLinkCore
 
 @MainActor
 final class LinkReceiverSessionTests: XCTestCase {
+    func testPublisherForwardsApplicationOwnedVideoAndAudioWithoutCreatingCapture() async throws {
+        let client = LinkLiveKitClientSpy()
+        let session = LiveKitMediaSession(client: client)
+        let source = LocalMediaSource()
+        try await session.connect(configuration: configuration)
+
+        try await session.publishCamera(source)
+        source.emitVideo(try makePixelBuffer(), presentationTime: CMTime(value: 2, timescale: 30))
+        source.emitAudio(try makeAudioSampleBuffer())
+        try await settle()
+
+        XCTAssertEqual(client.publishedFrameTimes, [CMTime(value: 2, timescale: 30)])
+        XCTAssertEqual(client.capturedAudioCount, 1)
+        XCTAssertEqual(session.audioCaptureOwnership, .application)
+    }
+
     func testConnectProjectsTracksSubscribesCameraAndMatchingMicrophone() async throws {
         let camera = track("camera", participant: "a", name: "Camera A", kind: .camera)
         let microphone = track("microphone", participant: "a", name: "Camera A", kind: .microphone)
@@ -81,6 +98,39 @@ final class LinkReceiverSessionTests: XCTestCase {
         XCTAssertEqual(CMSampleBufferCreateReadyWithImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: imageBuffer, formatDescription: try XCTUnwrap(description), sampleTiming: &timing, sampleBufferOut: &sampleBuffer), noErr)
         return try XCTUnwrap(sampleBuffer)
     }
+
+    private func makePixelBuffer() throws -> CVPixelBuffer {
+        var buffer: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 2, 2, kCVPixelFormatType_32BGRA, nil, &buffer), kCVReturnSuccess)
+        return try XCTUnwrap(buffer)
+    }
+
+    private func makeAudioSampleBuffer() throws -> CMSampleBuffer {
+        try XCTUnwrap(AudioSampleBufferFactory.makeInterleavedFloat(
+            samples: [0], sampleRate: 48_000, channels: 1, presentationTime: .zero
+        ))
+    }
+}
+
+private final class LinkLiveKitClientSpy: LiveKitClient {
+    var onStateChanged: ((LiveKitClientState) -> Void)?
+    var onTracksChanged: (([LiveKitTrackDescriptor]) -> Void)?
+    var onVideoFrame: ((String, CVPixelBuffer, CMTime) -> Void)?
+    var onAudioFrame: (@Sendable (String, AVAudioPCMBuffer) -> Void)?
+    var publishedFrameTimes: [CMTime] = []
+    var capturedAudioCount = 0
+
+    func connect(serverURL: URL, token: String) async throws { onStateChanged?(.connected) }
+    func publishCamera(firstFrame: CVPixelBuffer, presentationTime: CMTime) async throws {
+        publishedFrameTimes.append(presentationTime)
+    }
+    func capture(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
+        publishedFrameTimes.append(presentationTime)
+    }
+    func captureAudio(_ sampleBuffer: CMSampleBuffer) { capturedAudioCount += 1 }
+    func setMicrophoneEnabled(_ enabled: Bool) async throws {}
+    func subscribe(to trackID: String) async throws {}
+    func disconnect() async {}
 }
 
 private final class StubMediaSession: MediaSession {
