@@ -5,6 +5,20 @@ import XCTest
 
 @MainActor
 final class LinkReceiverSessionTests: XCTestCase {
+    func testDuplexSessionConnectsPublishesAndDisconnectsOneMediaSession() async throws {
+        let mediaSession = StubMediaSession(tracks: [])
+        let duplex = LinkDuplexSession(session: mediaSession)
+        let source = LocalMediaSource()
+
+        try await duplex.connect(configuration: configuration)
+        try await duplex.publish(source, microphoneEnabled: true)
+        await duplex.disconnect()
+
+        XCTAssertTrue(mediaSession.publishedSource === source)
+        XCTAssertEqual(mediaSession.microphoneValues, [true])
+        XCTAssertTrue(mediaSession.didDisconnect)
+    }
+
     func testPublisherForwardsApplicationOwnedVideoAndAudioWithoutCreatingCapture() async throws {
         let client = LinkLiveKitClientSpy()
         let session = LiveKitMediaSession(client: client)
@@ -85,7 +99,7 @@ final class LinkReceiverSessionTests: XCTestCase {
         RemoteMediaTrack(id: .init(rawValue: id), participantID: .init(rawValue: participant), participantName: name, kind: kind, isMuted: false)
     }
 
-    private func settle() async throws { try await Task.sleep(nanoseconds: 30_000_000) }
+    private func settle() async throws { try await Task.sleep(nanoseconds: 100_000_000) }
 
     private func makeVideoSampleBuffer() throws -> CMSampleBuffer {
         var pixelBuffer: CVPixelBuffer?

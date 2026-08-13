@@ -27,6 +27,7 @@ let package = Package(
             ],
             sources: [
                 "Session/AudioSampleBufferFactory.swift",
+                "Session/LinkDuplexSession.swift",
                 "Session/LinkReceiverSession.swift",
                 "Session/LiveKitMediaSession.swift",
                 "Session/LocalMediaSource.swift",
