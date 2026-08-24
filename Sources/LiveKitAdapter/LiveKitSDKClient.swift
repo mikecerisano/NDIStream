@@ -31,9 +31,40 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
 
     var usesSDKMicrophoneCapture: Bool { microphoneCaptureOwnership == .liveKit }
 
+    /// One explicit publish profile for the Link call leg (StageGlass
+    /// thermal-livekit plan, Aug 24, triple-approved). The SDK's defaults
+    /// otherwise govern — and `VideoPublishOptions.simulcast` defaults to
+    /// TRUE, which had a phone running parallel encoders for a one-viewer
+    /// call (field thermal SERIOUS at ~3min with liveKitPublish the only
+    /// active pipeline). Single H.264 layer, capped, framerate preferred;
+    /// adaptiveStream/dynacast pinned false explicitly so an SDK default
+    /// change can never re-enable them. Speech-preset audio (24 kbps Opus)
+    /// matches the call leg this client publishes.
+    /// NOTE: whether AudioPublishOptions governs the application-ownership
+    /// mixer-injected track in this SDK build is unverified (plan
+    /// uninspectable); the option is harmless if ignored.
+    private static func callRoomOptions() -> RoomOptions {
+        RoomOptions(
+            defaultVideoPublishOptions: VideoPublishOptions(
+                encoding: VideoEncoding(maxBitrate: 800_000, maxFps: 24),
+                simulcast: false,
+                preferredCodec: .h264,
+                degradationPreference: .maintainFramerate
+            ),
+            defaultAudioPublishOptions: AudioPublishOptions(
+                encoding: .presetSpeech
+            ),
+            adaptiveStream: false,
+            dynacast: false,
+            // Sender/receiver stats for the thermal ladder's mandatory
+            // peer-side measurement (plan DELTA 4.3).
+            reportRemoteTrackStatistics: true
+        )
+    }
+
     init(microphoneCaptureOwnership: MicrophoneCaptureOwnership = .application) {
         self.microphoneCaptureOwnership = microphoneCaptureOwnership
-        room = Room()
+        room = Room(roomOptions: Self.callRoomOptions())
         super.init()
         room.add(delegate: self)
     }
