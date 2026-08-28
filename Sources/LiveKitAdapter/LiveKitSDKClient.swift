@@ -7,6 +7,12 @@ import LiveKit
 ///
 /// This client deliberately accepts the application's existing pixel buffers instead
 /// of asking LiveKit to open another camera capture session.
+/// Process-wide publish tuning the HOST APP sets BEFORE a client (Room) is
+/// created (quality picker, Aug 27). Read once at Room creation.
+public enum LinkStreamPublishTuning {
+    public static var maxVideoBitrate: Int = 1_700_000
+}
+
 final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
     /// LiveKit Swift 2.16 cannot accept the application's existing microphone
     /// sample buffers. Keep microphone capture ownership explicit so we never
@@ -43,12 +49,6 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
     /// NOTE: whether AudioPublishOptions governs the application-ownership
     /// mixer-injected track in this SDK build is unverified (plan
     /// uninspectable); the option is harmless if ignored.
-    /// Process-wide publish tuning the HOST APP sets before creating a
-    /// client (quality picker, Aug 27). Read once at Room creation.
-    public enum LinkStreamPublishTuning {
-        public static var maxVideoBitrate: Int = 1_700_000
-    }
-
     private static func callRoomOptions() -> RoomOptions {
         RoomOptions(
             defaultVideoPublishOptions: VideoPublishOptions(
