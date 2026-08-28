@@ -208,11 +208,16 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
     }
 
     func setRemotePlaybackMuted(_ muted: Bool) {
-        lock.withLock { remotePlaybackMuted = muted }
-        for participant in room.remoteParticipants.values {
-            for publication in participant.trackPublications.values {
-                if let track = publication.track as? RemoteAudioTrack {
-                    track.volume = muted ? 0 : 1
+        // Flag update and volume application are ONE critical section: a late
+        // attach that read the old flag must not write a stale volume after an
+        // operator flip (attach's volume write holds this same lock).
+        lock.withLock {
+            remotePlaybackMuted = muted
+            for participant in room.remoteParticipants.values {
+                for publication in participant.trackPublications.values {
+                    if let track = publication.track as? RemoteAudioTrack {
+                        track.volume = muted ? 0 : 1
+                    }
                 }
             }
         }
@@ -260,7 +265,10 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
             }
             track.add(videoRenderer: renderer)
         } else if let track = publication.track as? RemoteAudioTrack {
-            track.volume = lock.withLock { remotePlaybackMuted } ? 0 : 1
+            // Same critical section as setRemotePlaybackMuted: read + apply
+            // atomically so a concurrent operator flip can't be overwritten
+            // with a stale value.
+            lock.withLock { track.volume = remotePlaybackMuted ? 0 : 1 }
             let renderer: PCMBufferRenderer = lock.withLock {
                 if let existing = audioRenderers[trackID] { return existing }
                 let created = PCMBufferRenderer(trackID: trackID) { [weak self] id, buffer in

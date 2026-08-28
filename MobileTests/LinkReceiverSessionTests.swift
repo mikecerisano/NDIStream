@@ -94,6 +94,19 @@ final class LinkReceiverSessionTests: XCTestCase {
         XCTAssertEqual(mediaSession.microphoneValues, [], "Receiver foundation must never open a microphone")
     }
 
+    func testRemotePlaybackMuteForwardsThroughSessionAndDuplex() async throws {
+        let client = LinkLiveKitClientSpy()
+        let session = LiveKitMediaSession(client: client)
+        session.setRemotePlaybackMuted(true)
+        session.setRemotePlaybackMuted(false)
+        XCTAssertEqual(client.remotePlaybackMutedValues, [true, false])
+
+        let duplexClient = LinkLiveKitClientSpy()
+        let duplex = LinkDuplexSession(session: LiveKitMediaSession(client: duplexClient))
+        duplex.setRemotePlaybackMuted(true)
+        XCTAssertEqual(duplexClient.remotePlaybackMutedValues, [true])
+    }
+
     private var configuration: SessionConfiguration {
         SessionConfiguration(serverURL: URL(string: "wss://example.invalid"), roomName: "room", displayName: "iPad", accessToken: "runtime-token")
     }
@@ -136,7 +149,8 @@ final class LinkReceiverSessionTests: XCTestCase {
 }
 
 private final class LinkLiveKitClientSpy: LiveKitClient {
-    func setRemotePlaybackMuted(_ muted: Bool) {}
+    var remotePlaybackMutedValues: [Bool] = []
+    func setRemotePlaybackMuted(_ muted: Bool) { remotePlaybackMutedValues.append(muted) }
     var onStateChanged: ((LiveKitClientState) -> Void)?
     var onTracksChanged: (([LiveKitTrackDescriptor]) -> Void)?
     var onVideoFrame: ((String, CVPixelBuffer, CMTime) -> Void)?
