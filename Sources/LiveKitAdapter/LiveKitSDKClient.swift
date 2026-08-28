@@ -150,8 +150,22 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
 
     func setMicrophoneEnabled(_ enabled: Bool) async throws {
         // Manual rendering + automatic-configuration-off are set once in
-        // `init` for application ownership — nothing session-related left to
-        // do here; the mic track publish is pure transport.
+        // `init` for application ownership. CRITICAL (field silence, Aug 28):
+        // publishing the mic track is NOT enough — in manual rendering the
+        // SDK's audio engine never starts on its own, and
+        // `mixer.capture(appAudio:)` drops every buffer against a stopped
+        // engine ("Engine is not running"), leaving a healthy-LOOKING but
+        // SILENT published track. `startLocalRecording()` starts the ADM
+        // recording path, which brings the engine up in manual mode (no
+        // device IO, no AVAudioSession touch — the session observer skips
+        // both in manual rendering).
+        if microphoneCaptureOwnership == .application {
+            if enabled {
+                try AudioManager.shared.startLocalRecording()
+            } else {
+                try? AudioManager.shared.stopLocalRecording()
+            }
+        }
         try await room.localParticipant.setMicrophone(enabled: enabled)
     }
 
