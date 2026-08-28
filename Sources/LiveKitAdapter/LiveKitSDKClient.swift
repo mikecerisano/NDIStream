@@ -88,10 +88,23 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
         // 2. Automatic session configuration off — the session observer's
         //    configure path is a total no-op even if an engine state slips.
         if microphoneCaptureOwnership == .application {
-            try? AudioManager.shared.setManualRenderingMode(true)
+            // NORMAL engine mode (Aug 28 field fix, codex-verified in 2.16
+            // source): manual rendering is UNSHIPPABLE here — the SDK's own
+            // tests pin the engine as non-running in manual mode, so
+            // mixer.capture(appAudio:) drops every buffer (silent published
+            // track) and no public call bridges the gap. Instead:
+            // - session config stays OFF (the app owns AVAudioSession; the
+            //   churn class stays dead),
+            // - the normal engine runs and SDK PLAYOUT is the speaker path
+            //   for remote audio (the app must NOT also play frames),
+            // - the device-mic contribution is muted at the mixer so ONLY
+            //   app-injected audio reaches the published track.
             #if os(iOS)
             AudioManager.shared.audioSession.isAutomaticConfigurationEnabled = false
             #endif
+            try? AudioManager.shared.set(microphoneMuteMode: .inputMixer)
+            AudioManager.shared.mixer.micVolume = 0
+            AudioManager.shared.mixer.appVolume = 1
         }
         room = Room(roomOptions: Self.callRoomOptions())
         super.init()
@@ -159,13 +172,9 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
         // recording path, which brings the engine up in manual mode (no
         // device IO, no AVAudioSession touch — the session observer skips
         // both in manual rendering).
-        if microphoneCaptureOwnership == .application {
-            if enabled {
-                try AudioManager.shared.startLocalRecording()
-            } else {
-                try? AudioManager.shared.stopLocalRecording()
-            }
-        }
+        // Normal engine mode: setMicrophone drives the full lifecycle
+        // (engine start, recording, playout). App audio is injected via
+        // mixer.capture; the device-mic path is muted at the mixer (init).
         try await room.localParticipant.setMicrophone(enabled: enabled)
     }
 
