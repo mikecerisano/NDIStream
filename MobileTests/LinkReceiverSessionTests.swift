@@ -41,6 +41,7 @@ final class LinkReceiverSessionTests: XCTestCase {
         let other = track("other", participant: "b", name: "Camera B", kind: .camera)
         let mediaSession = StubMediaSession(tracks: [other, microphone, camera])
         let receiver = LinkReceiverSession(session: mediaSession)
+        receiver.isAudioSubscriptionEnabled = true
 
         try await receiver.connect(configuration: configuration)
         try await settle()
@@ -58,6 +59,7 @@ final class LinkReceiverSessionTests: XCTestCase {
         let microphoneB = track("microphone-b", participant: "b", name: "B", kind: .microphone)
         let mediaSession = StubMediaSession(tracks: [cameraA, microphoneA, cameraB, microphoneB])
         let receiver = LinkReceiverSession(session: mediaSession)
+        receiver.isAudioSubscriptionEnabled = true
         var videoIDs: [MediaTrackID] = []
         var audioIDs: [MediaTrackID] = []
         receiver.onVideoFrame = { id, _ in videoIDs.append(id) }
@@ -82,6 +84,7 @@ final class LinkReceiverSessionTests: XCTestCase {
     func testDisconnectClearsProjectionAndDoesNotOwnCapture() async throws {
         let mediaSession = StubMediaSession(tracks: [])
         let receiver = LinkReceiverSession(session: mediaSession)
+        receiver.isAudioSubscriptionEnabled = true
         try await receiver.connect(configuration: configuration)
         await receiver.disconnect()
         XCTAssertEqual(receiver.state, .idle)
@@ -99,7 +102,9 @@ final class LinkReceiverSessionTests: XCTestCase {
         RemoteMediaTrack(id: .init(rawValue: id), participantID: .init(rawValue: participant), participantName: name, kind: kind, isMuted: false)
     }
 
-    private func settle() async throws { try await Task.sleep(nanoseconds: 100_000_000) }
+    // 100ms flaked under full-suite parallel load (subscribe Tasks unscheduled
+    // when the assertion ran); generous fixed settle keeps the pin honest.
+    private func settle() async throws { try await Task.sleep(nanoseconds: 400_000_000) }
 
     private func makeVideoSampleBuffer() throws -> CMSampleBuffer {
         var pixelBuffer: CVPixelBuffer?
@@ -127,6 +132,7 @@ final class LinkReceiverSessionTests: XCTestCase {
 }
 
 private final class LinkLiveKitClientSpy: LiveKitClient {
+    func setRemotePlaybackMuted(_ muted: Bool) {}
     var onStateChanged: ((LiveKitClientState) -> Void)?
     var onTracksChanged: (([LiveKitTrackDescriptor]) -> Void)?
     var onVideoFrame: ((String, CVPixelBuffer, CMTime) -> Void)?
