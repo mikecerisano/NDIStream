@@ -102,9 +102,13 @@ final class LinkReceiverSessionTests: XCTestCase {
         RemoteMediaTrack(id: .init(rawValue: id), participantID: .init(rawValue: participant), participantName: name, kind: kind, isMuted: false)
     }
 
-    // 100ms flaked under full-suite parallel load (subscribe Tasks unscheduled
-    // when the assertion ran); generous fixed settle keeps the pin honest.
-    private func settle() async throws { try await Task.sleep(nanoseconds: 400_000_000) }
+    // Subscribes run on fire-and-forget tasks that hop executors; give them
+    // real time plus main-actor yields so every enqueued task completes.
+    private func settle() async throws {
+        for _ in 0..<20 { await Task.yield() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        for _ in 0..<20 { await Task.yield() }
+    }
 
     private func makeVideoSampleBuffer() throws -> CMSampleBuffer {
         var pixelBuffer: CVPixelBuffer?
@@ -173,7 +177,11 @@ private final class StubMediaSession: MediaSession {
     }
     func publishCamera(_ source: LocalMediaSource) async throws { publishedSource = source }
     func setMicrophoneEnabled(_ enabled: Bool) async throws { microphoneValues.append(enabled) }
-    func subscribe(to trackID: MediaTrackID) async throws { subscribed.append(trackID) }
+    // Concurrent fire-and-forget subscribe tasks land here off the main actor;
+    // hop the append to main so appends can't race each other or the test's read.
+    func subscribe(to trackID: MediaTrackID) async throws {
+        await MainActor.run { subscribed.append(trackID) }
+    }
     func disconnect() async { didDisconnect = true; state = .idle }
     func currentStats() -> TransportStats? { nil }
 }
