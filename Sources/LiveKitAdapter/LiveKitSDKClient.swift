@@ -43,6 +43,12 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
     /// NOTE: whether AudioPublishOptions governs the application-ownership
     /// mixer-injected track in this SDK build is unverified (plan
     /// uninspectable); the option is harmless if ignored.
+    /// Process-wide publish tuning the HOST APP sets before creating a
+    /// client (quality picker, Aug 27). Read once at Room creation.
+    public enum LinkStreamPublishTuning {
+        public static var maxVideoBitrate: Int = 1_700_000
+    }
+
     private static func callRoomOptions() -> RoomOptions {
         RoomOptions(
             defaultVideoPublishOptions: VideoPublishOptions(
@@ -51,7 +57,7 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
                 // can hold at 720p, replacing starved 1080p that collapsed
                 // under motion at 800k. Still single-layer H.264 — the Aug 24
                 // thermal defect was simulcast's parallel encoders, not rate.
-                encoding: VideoEncoding(maxBitrate: 1_700_000, maxFps: 24),
+                encoding: VideoEncoding(maxBitrate: LinkStreamPublishTuning.maxVideoBitrate, maxFps: 24),
                 simulcast: false,
                 preferredCodec: .h264,
                 degradationPreference: .maintainFramerate
