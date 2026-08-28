@@ -46,7 +46,12 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
     private static func callRoomOptions() -> RoomOptions {
         RoomOptions(
             defaultVideoPublishOptions: VideoPublishOptions(
-                encoding: VideoEncoding(maxBitrate: 800_000, maxFps: 24),
+                // 1.7 Mbps paired with the app-side 720p short-edge cap on
+                // published frames (Aug 27 quality ruling): bits the encoder
+                // can hold at 720p, replacing starved 1080p that collapsed
+                // under motion at 800k. Still single-layer H.264 — the Aug 24
+                // thermal defect was simulcast's parallel encoders, not rate.
+                encoding: VideoEncoding(maxBitrate: 1_700_000, maxFps: 24),
                 simulcast: false,
                 preferredCodec: .h264,
                 degradationPreference: .maintainFramerate
