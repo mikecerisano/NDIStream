@@ -104,6 +104,14 @@ final class LinkReceiverSessionTests: XCTestCase {
         XCTAssertEqual(duplex.state, .connected)
     }
 
+    func testDuplexForwardsRuntimeMicrophoneMute() async throws {
+        let mediaSession = StubMediaSession(tracks: [])
+        let duplex = LinkDuplexSession(session: mediaSession)
+        try await duplex.setMicrophoneEnabled(false)
+        try await duplex.setMicrophoneEnabled(true)
+        XCTAssertEqual(mediaSession.microphoneValues, [false, true])
+    }
+
     func testRemotePlaybackMuteForwardsThroughSessionAndDuplex() async throws {
         let client = LinkLiveKitClientSpy()
         let session = LiveKitMediaSession(client: client)

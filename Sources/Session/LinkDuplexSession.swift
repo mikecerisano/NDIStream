@@ -50,6 +50,13 @@ public final class LinkDuplexSession {
         session.setRemotePlaybackMuted(muted)
     }
 
+    /// Runtime LOCAL-mic mute for a live publication — the Mac call owner's
+    /// transport-level mute (the peer receives silence; plan v2 finding: the
+    /// old desktop mute flipped UI state only).
+    public func setMicrophoneEnabled(_ enabled: Bool) async throws {
+        try await session.setMicrophoneEnabled(enabled)
+    }
+
     public func disconnect() async {
         await receiver.disconnect()
     }
