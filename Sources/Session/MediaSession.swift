@@ -116,7 +116,15 @@ public protocol MediaSession: AnyObject {
     func connect(configuration: SessionConfiguration) async throws
     func publishCamera(_ source: LocalMediaSource) async throws
     func setMicrophoneEnabled(_ enabled: Bool) async throws
+    /// Operator mute for REMOTE audio playback (peer voice). Default no-op.
+    func setRemotePlaybackMuted(_ muted: Bool)
     func subscribe(to trackID: MediaTrackID) async throws
     func disconnect() async
     func currentStats() -> TransportStats?
+}
+
+
+public extension MediaSession {
+    /// Sessions without SDK playout (NDI) have nothing to mute remotely.
+    func setRemotePlaybackMuted(_ muted: Bool) {}
 }

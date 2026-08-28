@@ -37,6 +37,11 @@ public final class LinkDuplexSession {
         try await session.setMicrophoneEnabled(microphoneEnabled)
     }
 
+    /// Operator mute for the peer's voice playback (remote SDK playout).
+    public func setRemotePlaybackMuted(_ muted: Bool) {
+        session.setRemotePlaybackMuted(muted)
+    }
+
     public func disconnect() async {
         await receiver.disconnect()
     }

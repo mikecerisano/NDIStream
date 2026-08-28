@@ -25,6 +25,7 @@ protocol LiveKitClient: AnyObject {
     func capture(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime)
     func captureAudio(_ sampleBuffer: CMSampleBuffer)
     func setMicrophoneEnabled(_ enabled: Bool) async throws
+    func setRemotePlaybackMuted(_ muted: Bool)
     func subscribe(to trackID: String) async throws
     func disconnect() async
 }
@@ -113,6 +114,10 @@ public final class LiveKitMediaSession: MediaSession {
                 self?.client.captureAudio(sampleBuffer)
             }
         )
+    }
+
+    public func setRemotePlaybackMuted(_ muted: Bool) {
+        client.setRemotePlaybackMuted(muted)
     }
 
     public func setMicrophoneEnabled(_ enabled: Bool) async throws { try await client.setMicrophoneEnabled(enabled) }

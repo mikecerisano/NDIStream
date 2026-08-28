@@ -34,6 +34,9 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
     private var renderers: [String: PixelBufferRenderer] = [:]
     private var audioRenderers: [String: PCMBufferRenderer] = [:]
     private let microphoneCaptureOwnership: MicrophoneCaptureOwnership
+    /// Operator mute for REMOTE playback (the peer's voice). Applied to every
+    /// current remote audio track and re-applied to late subscriptions.
+    private var remotePlaybackMuted = false
 
     var usesSDKMicrophoneCapture: Bool { microphoneCaptureOwnership == .liveKit }
 
@@ -204,6 +207,17 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
         return raw.replacingOccurrences(of: token, with: "<redacted>")
     }
 
+    func setRemotePlaybackMuted(_ muted: Bool) {
+        lock.withLock { remotePlaybackMuted = muted }
+        for participant in room.remoteParticipants.values {
+            for publication in participant.trackPublications.values {
+                if let track = publication.track as? RemoteAudioTrack {
+                    track.volume = muted ? 0 : 1
+                }
+            }
+        }
+    }
+
     private func remotePublication(withID id: String) -> RemoteTrackPublication? {
         room.remoteParticipants.values
             .flatMap(\.trackPublications.values)
@@ -246,6 +260,7 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
             }
             track.add(videoRenderer: renderer)
         } else if let track = publication.track as? RemoteAudioTrack {
+            track.volume = lock.withLock { remotePlaybackMuted } ? 0 : 1
             let renderer: PCMBufferRenderer = lock.withLock {
                 if let existing = audioRenderers[trackID] { return existing }
                 let created = PCMBufferRenderer(trackID: trackID) { [weak self] id, buffer in
