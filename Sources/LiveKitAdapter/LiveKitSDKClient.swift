@@ -69,6 +69,24 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
 
     init(microphoneCaptureOwnership: MicrophoneCaptureOwnership = .application) {
         self.microphoneCaptureOwnership = microphoneCaptureOwnership
+        // Single-session-owner law (StageGlass, Aug 27): the SDK must NEVER
+        // touch AVAudioSession — the host app owns it exclusively. Two
+        // independent mechanisms, both unconditional (publisher AND receiver;
+        // previously manual rendering was set only inside
+        // setMicrophoneEnabled(true), so a receiver auto-subscribing a peer
+        // mic ran the SDK's real playout engine and its session observer
+        // configured + setActive'd per track change — the churn class that
+        // watchdog-crashed audiomxd):
+        // 1. Manual rendering — the engine takes no device path, remote audio
+        //    reaches the app only via explicit track renderers.
+        // 2. Automatic session configuration off — the session observer's
+        //    configure path is a total no-op even if an engine state slips.
+        if microphoneCaptureOwnership == .application {
+            try? AudioManager.shared.setManualRenderingMode(true)
+            #if os(iOS)
+            AudioManager.shared.audioSession.isAutomaticConfigurationEnabled = false
+            #endif
+        }
         room = Room(roomOptions: Self.callRoomOptions())
         super.init()
         room.add(delegate: self)
@@ -125,13 +143,9 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
     }
 
     func setMicrophoneEnabled(_ enabled: Bool) async throws {
-        if microphoneCaptureOwnership == .application {
-            if enabled {
-                try AudioManager.shared.setManualRenderingMode(true)
-            }
-            try await room.localParticipant.setMicrophone(enabled: enabled)
-            return
-        }
+        // Manual rendering + automatic-configuration-off are set once in
+        // `init` for application ownership — nothing session-related left to
+        // do here; the mic track publish is pure transport.
         try await room.localParticipant.setMicrophone(enabled: enabled)
     }
 

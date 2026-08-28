@@ -50,6 +50,19 @@ public final class LinkReceiverSession {
         setState(.idle)
     }
 
+    /// Whether the peer's microphone track is auto-selected and SUBSCRIBED.
+    /// Default false: a video-only receiver must not burn Opus decode (or, in
+    /// any pre-manual-rendering build, engage SDK playout) for audio the app
+    /// would drop. The host app sets this from its receivesAudio decision at
+    /// connect time (StageGlass single-session-owner plan, Aug 27).
+    public var isAudioSubscriptionEnabled: Bool = false {
+        didSet {
+            guard isAudioSubscriptionEnabled != oldValue else { return }
+            selectMatchingAudio()
+            subscribeIfNeeded(selectedAudioTrack?.trackID)
+        }
+    }
+
     /// Explicit source choice for operator UIs. Audio follows the same participant.
     public func selectVideoTrack(_ selection: MediaTrackSelectionID) {
         guard remoteTracks.contains(where: { $0.selectionID == selection && $0.kind == .camera }) else { return }
@@ -101,6 +114,10 @@ public final class LinkReceiverSession {
     }
 
     private func selectMatchingAudio() {
+        guard isAudioSubscriptionEnabled else {
+            selectedAudioTrack = nil
+            return
+        }
         guard let participantID = selectedVideoTrack?.participantID else {
             selectedAudioTrack = nil
             return

@@ -20,6 +20,14 @@ public final class LinkDuplexSession {
         receiver = LinkReceiverSession(session: session)
     }
 
+    /// Forwarded receiver gate: whether the peer's microphone track is
+    /// auto-subscribed. Default false — the host app opts in from its
+    /// receivesAudio decision (see LinkReceiverSession.isAudioSubscriptionEnabled).
+    public var isAudioSubscriptionEnabled: Bool {
+        get { receiver.isAudioSubscriptionEnabled }
+        set { receiver.isAudioSubscriptionEnabled = newValue }
+    }
+
     public func connect(configuration: SessionConfiguration) async throws {
         try await receiver.connect(configuration: configuration)
     }
