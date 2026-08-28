@@ -94,6 +94,16 @@ final class LinkReceiverSessionTests: XCTestCase {
         XCTAssertEqual(mediaSession.microphoneValues, [], "Receiver foundation must never open a microphone")
     }
 
+    func testDuplexForwardsReceiverStateChanges() async throws {
+        let mediaSession = StubMediaSession(tracks: [])
+        let duplex = LinkDuplexSession(session: mediaSession)
+        var seen: [SessionState] = []
+        duplex.onStateChanged = { seen.append($0) }
+        try await duplex.connect(configuration: configuration)
+        XCTAssertTrue(seen.contains(.connecting), "duplex must forward the receiver's state stream")
+        XCTAssertEqual(duplex.state, .connected)
+    }
+
     func testRemotePlaybackMuteForwardsThroughSessionAndDuplex() async throws {
         let client = LinkLiveKitClientSpy()
         let session = LiveKitMediaSession(client: client)

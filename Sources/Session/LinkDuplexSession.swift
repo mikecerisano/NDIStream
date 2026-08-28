@@ -12,6 +12,14 @@ public final class LinkDuplexSession {
         didSet { receiver.onAudioFrame = onAudioFrame }
     }
 
+    /// Forwarded receiver state — the Mac call owner's `connectionPhase`
+    /// source (video-chat plan v2: `LinkDuplexSession` exposed no state at
+    /// all, which made reconnect UI unbuildable — plan review finding).
+    public var onStateChanged: ((SessionState) -> Void)? {
+        didSet { receiver.onStateChanged = onStateChanged }
+    }
+    public var state: SessionState { receiver.state }
+
     private let session: MediaSession
     private let receiver: LinkReceiverSession
 
