@@ -104,6 +104,14 @@ final class LinkReceiverSessionTests: XCTestCase {
         XCTAssertEqual(duplex.state, .connected)
     }
 
+    func testDuplexForwardsCameraPublishEnable() async throws {
+        let mediaSession = StubMediaSession(tracks: [])
+        let duplex = LinkDuplexSession(session: mediaSession)
+        try await duplex.setCameraPublishEnabled(false)
+        try await duplex.setCameraPublishEnabled(true)
+        XCTAssertEqual(mediaSession.cameraPublishValues, [false, true])
+    }
+
     func testDuplexForwardsRuntimeMicrophoneMute() async throws {
         let mediaSession = StubMediaSession(tracks: [])
         let duplex = LinkDuplexSession(session: mediaSession)
@@ -185,6 +193,7 @@ private final class LinkLiveKitClientSpy: LiveKitClient {
     }
     func captureAudio(_ sampleBuffer: CMSampleBuffer) { capturedAudioCount += 1 }
     func setMicrophoneEnabled(_ enabled: Bool) async throws {}
+    func setCameraPublishEnabled(_ enabled: Bool) async throws {}
     func subscribe(to trackID: String) async throws {}
     func disconnect() async {}
 }
@@ -209,6 +218,8 @@ private final class StubMediaSession: MediaSession {
     }
     func publishCamera(_ source: LocalMediaSource) async throws { publishedSource = source }
     func setMicrophoneEnabled(_ enabled: Bool) async throws { microphoneValues.append(enabled) }
+    var cameraPublishValues: [Bool] = []
+    func setCameraPublishEnabled(_ enabled: Bool) async throws { cameraPublishValues.append(enabled) }
     // Concurrent fire-and-forget subscribe tasks land here off the main actor;
     // hop the append to main so appends can't race each other or the test's read.
     func subscribe(to trackID: MediaTrackID) async throws {

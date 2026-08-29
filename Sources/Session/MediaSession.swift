@@ -116,6 +116,7 @@ public protocol MediaSession: AnyObject {
     func connect(configuration: SessionConfiguration) async throws
     func publishCamera(_ source: LocalMediaSource) async throws
     func setMicrophoneEnabled(_ enabled: Bool) async throws
+    func setCameraPublishEnabled(_ enabled: Bool) async throws
     /// Operator mute for REMOTE audio playback (peer voice). Default no-op.
     func setRemotePlaybackMuted(_ muted: Bool)
     func subscribe(to trackID: MediaTrackID) async throws

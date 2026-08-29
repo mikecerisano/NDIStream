@@ -57,6 +57,12 @@ public final class LinkDuplexSession {
         try await session.setMicrophoneEnabled(enabled)
     }
 
+    /// Runtime camera pause for a live publication (peer sees video stop) —
+    /// the Mac call owner's setCameraEnabled projection.
+    public func setCameraPublishEnabled(_ enabled: Bool) async throws {
+        try await session.setCameraPublishEnabled(enabled)
+    }
+
     public func disconnect() async {
         await receiver.disconnect()
     }

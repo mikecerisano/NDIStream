@@ -207,6 +207,15 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
         return raw.replacingOccurrences(of: token, with: "<redacted>")
     }
 
+    func setCameraPublishEnabled(_ enabled: Bool) async throws {
+        guard let track = cameraTrack else { return }
+        if enabled {
+            try await track.unmute()
+        } else {
+            try await track.mute()
+        }
+    }
+
     func setRemotePlaybackMuted(_ muted: Bool) {
         // Flag update and volume application are ONE critical section: a late
         // attach that read the old flag must not write a stale volume after an
