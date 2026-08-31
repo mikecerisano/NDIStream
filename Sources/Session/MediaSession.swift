@@ -120,6 +120,7 @@ public protocol MediaSession: AnyObject {
     /// Operator mute for REMOTE audio playback (peer voice). Default no-op.
     func setRemotePlaybackMuted(_ muted: Bool)
     func subscribe(to trackID: MediaTrackID) async throws
+    func unsubscribe(from trackID: MediaTrackID) async throws
     func disconnect() async
     func currentStats() -> TransportStats?
 }
@@ -128,4 +129,6 @@ public protocol MediaSession: AnyObject {
 public extension MediaSession {
     /// Sessions without SDK playout (NDI) have nothing to mute remotely.
     func setRemotePlaybackMuted(_ muted: Bool) {}
+    /// Adapters without remote subscriptions have nothing to release.
+    func unsubscribe(from trackID: MediaTrackID) async throws {}
 }

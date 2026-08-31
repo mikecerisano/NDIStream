@@ -28,6 +28,7 @@ protocol LiveKitClient: AnyObject {
     func setCameraPublishEnabled(_ enabled: Bool) async throws
     func setRemotePlaybackMuted(_ muted: Bool)
     func subscribe(to trackID: String) async throws
+    func unsubscribe(from trackID: String) async throws
     func disconnect() async
 }
 
@@ -59,6 +60,7 @@ public final class LiveKitMediaSession: MediaSession {
     private var connected = false
     private var cameraPublished = false
     private var cameraPublishInFlight = false
+    private var desiredCameraPublishEnabled = true
     private var generation: UInt64 = 0
     private var remoteAudioPTS: [String: CMTime] = [:]
 
@@ -122,11 +124,18 @@ public final class LiveKitMediaSession: MediaSession {
     }
 
     public func setMicrophoneEnabled(_ enabled: Bool) async throws { try await client.setMicrophoneEnabled(enabled) }
-    public func setCameraPublishEnabled(_ enabled: Bool) async throws { try await client.setCameraPublishEnabled(enabled) }
+    public func setCameraPublishEnabled(_ enabled: Bool) async throws {
+        lock.withLock { desiredCameraPublishEnabled = enabled }
+        try await client.setCameraPublishEnabled(enabled)
+    }
 
     public func subscribe(to trackID: MediaTrackID) async throws {
         guard remoteTracks.contains(where: { $0.id == trackID }) else { throw ConfigurationError.unknownTrack }
         try await client.subscribe(to: trackID.rawValue)
+    }
+
+    public func unsubscribe(from trackID: MediaTrackID) async throws {
+        try await client.unsubscribe(from: trackID.rawValue)
     }
 
     public func disconnect() async {
@@ -137,6 +146,7 @@ public final class LiveKitMediaSession: MediaSession {
             connected = false
             cameraPublished = false
             cameraPublishInFlight = false
+            desiredCameraPublishEnabled = true
             storedRemoteTracks = []
             storedState = .idle
         }
@@ -241,6 +251,14 @@ public final class LiveKitMediaSession: MediaSession {
             guard let self else { return }
             do {
                 try await client.publishCamera(firstFrame: pixelBuffer, presentationTime: presentationTime)
+                // setCameraPublishEnabled(false) can arrive before the first
+                // frame creates the SDK track. Re-apply the retained intent
+                // immediately after publication so that call-site success
+                // can never be lost at the lazy-track boundary.
+                let desiredCameraPublishEnabled = self.lock.withLock {
+                    self.desiredCameraPublishEnabled
+                }
+                try await self.client.setCameraPublishEnabled(desiredCameraPublishEnabled)
                 self.lock.withLock {
                     guard self.connected, self.generation == expectedGeneration else { return }
                     self.cameraPublished = true

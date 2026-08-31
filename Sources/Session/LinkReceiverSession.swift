@@ -15,11 +15,17 @@ public final class LinkReceiverSession {
 
     public var onStateChanged: ((SessionState) -> Void)?
     public var onTracksChanged: (([RemoteMediaTrack]) -> Void)?
+    /// Emits whenever the active remote camera selection changes. A nil
+    /// selection means there is currently no unmuted remote camera and lets
+    /// hosts remove a cached last frame instead of presenting it as live.
+    public var onSelectedVideoTrackChanged: ((MediaTrackSelectionID?) -> Void)?
     public var onVideoFrame: ((MediaTrackID, CMSampleBuffer) -> Void)?
     public var onAudioFrame: ((MediaTrackID, CMSampleBuffer) -> Void)?
 
     private let session: MediaSession
     private var subscribedTrackIDs = Set<MediaTrackID>()
+    private var desiredSubscribedTrackIDs = Set<MediaTrackID>()
+    private var subscriptionTask: Task<Void, Never>?
 
     public init(session: MediaSession = LiveKitMediaSession()) {
         self.session = session
@@ -28,7 +34,10 @@ public final class LinkReceiverSession {
 
     public func connect(configuration: SessionConfiguration) async throws {
         guard state == .idle || isFailed else { return }
+        subscriptionTask?.cancel()
+        subscriptionTask = nil
         subscribedTrackIDs.removeAll()
+        desiredSubscribedTrackIDs.removeAll()
         setState(.connecting)
         do {
             try await session.connect(configuration: configuration)
@@ -41,10 +50,13 @@ public final class LinkReceiverSession {
     }
 
     public func disconnect() async {
+        subscriptionTask?.cancel()
+        subscriptionTask = nil
+        desiredSubscribedTrackIDs.removeAll()
         await session.disconnect()
         subscribedTrackIDs.removeAll()
         remoteTracks = []
-        selectedVideoTrack = nil
+        setSelectedVideoTrack(nil)
         selectedAudioTrack = nil
         onTracksChanged?([])
         setState(.idle)
@@ -59,17 +71,18 @@ public final class LinkReceiverSession {
         didSet {
             guard isAudioSubscriptionEnabled != oldValue else { return }
             selectMatchingAudio()
-            subscribeIfNeeded(selectedAudioTrack?.trackID)
+            reconcileSubscriptions()
         }
     }
 
     /// Explicit source choice for operator UIs. Audio follows the same participant.
     public func selectVideoTrack(_ selection: MediaTrackSelectionID) {
-        guard remoteTracks.contains(where: { $0.selectionID == selection && $0.kind == .camera }) else { return }
-        selectedVideoTrack = selection
+        guard remoteTracks.contains(where: {
+            $0.selectionID == selection && $0.kind == .camera && !$0.isMuted
+        }) else { return }
+        setSelectedVideoTrack(selection)
         selectMatchingAudio()
-        subscribeIfNeeded(selection.trackID)
-        subscribeIfNeeded(selectedAudioTrack?.trackID)
+        reconcileSubscriptions()
     }
 
     private var isFailed: Bool {
@@ -100,17 +113,25 @@ public final class LinkReceiverSession {
 
     private func receive(_ tracks: [RemoteMediaTrack]) {
         remoteTracks = tracks.sorted(by: Self.trackOrder)
-        if let selectedVideoTrack,
-           !remoteTracks.contains(where: { $0.selectionID == selectedVideoTrack && $0.kind == .camera }) {
-            self.selectedVideoTrack = nil
-        }
-        if selectedVideoTrack == nil {
-            selectedVideoTrack = remoteTracks.first(where: { $0.kind == .camera && !$0.isMuted })?.selectionID
+        let selectedIsActive = selectedVideoTrack.map { selected in
+            remoteTracks.contains(where: {
+                $0.selectionID == selected && $0.kind == .camera && !$0.isMuted
+            })
+        } ?? false
+        if !selectedIsActive {
+            setSelectedVideoTrack(
+                remoteTracks.first(where: { $0.kind == .camera && !$0.isMuted })?.selectionID
+            )
         }
         selectMatchingAudio()
-        subscribeIfNeeded(selectedVideoTrack?.trackID)
-        subscribeIfNeeded(selectedAudioTrack?.trackID)
+        reconcileSubscriptions()
         onTracksChanged?(remoteTracks)
+    }
+
+    private func setSelectedVideoTrack(_ selection: MediaTrackSelectionID?) {
+        guard selectedVideoTrack != selection else { return }
+        selectedVideoTrack = selection
+        onSelectedVideoTrackChanged?(selection)
     }
 
     private func selectMatchingAudio() {
@@ -135,7 +156,8 @@ public final class LinkReceiverSession {
         }
         if let selectedAudioTrack,
            remoteTracks.contains(where: {
-               $0.selectionID == selectedAudioTrack && $0.kind == .microphone && $0.participantID == participantID
+               $0.selectionID == selectedAudioTrack && $0.kind == .microphone
+                   && $0.participantID == participantID && !$0.isMuted
            }) {
             return
         }
@@ -144,17 +166,47 @@ public final class LinkReceiverSession {
         })?.selectionID
     }
 
-    private func subscribeIfNeeded(_ trackID: MediaTrackID?) {
-        guard let trackID, !subscribedTrackIDs.contains(trackID) else { return }
-        subscribedTrackIDs.insert(trackID)
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                try await self.session.subscribe(to: trackID)
-            } catch {
-                self.subscribedTrackIDs.remove(trackID)
-                self.setState(.failed(message: "Could not subscribe to remote media: \(error.localizedDescription)"))
+    private func reconcileSubscriptions() {
+        desiredSubscribedTrackIDs = Set(
+            [selectedVideoTrack?.trackID, selectedAudioTrack?.trackID].compactMap { $0 }
+        )
+        guard subscriptionTask == nil else { return }
+        subscriptionTask = Task { [weak self] in
+            await self?.runSubscriptionReconciliation()
+        }
+    }
+
+    private func runSubscriptionReconciliation() async {
+        defer {
+            subscriptionTask = nil
+            if subscribedTrackIDs != desiredSubscribedTrackIDs { reconcileSubscriptions() }
+        }
+        while !Task.isCancelled {
+            if let obsolete = subscribedTrackIDs.subtracting(desiredSubscribedTrackIDs)
+                .sorted(by: { $0.rawValue < $1.rawValue }).first {
+                do {
+                    try await session.unsubscribe(from: obsolete)
+                    guard !Task.isCancelled else { return }
+                    subscribedTrackIDs.remove(obsolete)
+                } catch {
+                    setState(.failed(message: "Could not release remote media: \(error.localizedDescription)"))
+                    return
+                }
+                continue
             }
+            if let missing = desiredSubscribedTrackIDs.subtracting(subscribedTrackIDs)
+                .sorted(by: { $0.rawValue < $1.rawValue }).first {
+                do {
+                    try await session.subscribe(to: missing)
+                    guard !Task.isCancelled else { return }
+                    subscribedTrackIDs.insert(missing)
+                } catch {
+                    setState(.failed(message: "Could not subscribe to remote media: \(error.localizedDescription)"))
+                    return
+                }
+                continue
+            }
+            return
         }
     }
 

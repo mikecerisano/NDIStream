@@ -62,6 +62,8 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
     private let lock = NSLock()
     private var cameraTrack: LocalVideoTrack?
     private var cameraCapturer: BufferCapturer?
+    private var desiredCameraPublishEnabled = true
+    private var cameraPublishIntentGeneration: UInt64 = 0
     private var renderers: [String: PixelBufferRenderer] = [:]
     private var audioRenderers: [String: PCMBufferRenderer] = [:]
     private let microphoneCaptureOwnership: MicrophoneCaptureOwnership
@@ -167,7 +169,7 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
     /// Supplies the first frame and publishes one application-owned camera track.
     /// LiveKit needs a frame before publish so it can determine encoding dimensions.
     func publishCamera(firstFrame: CVPixelBuffer, presentationTime: CMTime) async throws {
-        if cameraTrack != nil {
+        if lock.withLock({ cameraTrack != nil }) {
             capture(firstFrame, presentationTime: presentationTime)
             return
         }
@@ -182,9 +184,25 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
         }
 
         capturer.capture(firstFrame, timeStampNs: Self.nanoseconds(for: presentationTime))
-        _ = try await room.localParticipant.publish(videoTrack: track)
-        cameraTrack = track
-        cameraCapturer = capturer
+        lock.withLock {
+            cameraTrack = track
+            cameraCapturer = capturer
+        }
+        do {
+            // Apply camera-off before publication when possible, then again
+            // after the suspending publish call. The reconciliation loop is
+            // generation-checked, so a concurrent operator flip always wins.
+            try await reconcileCameraPublishIntent(on: track)
+            _ = try await room.localParticipant.publish(videoTrack: track)
+            try await reconcileCameraPublishIntent(on: track)
+        } catch {
+            lock.withLock {
+                guard cameraTrack === track else { return }
+                cameraTrack = nil
+                cameraCapturer = nil
+            }
+            throw error
+        }
     }
 
     func capture(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
@@ -222,12 +240,36 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
         attachRendererIfNeeded(to: publication)
     }
 
+    func unsubscribe(from trackID: String) async throws {
+        guard let publication = remotePublication(withID: trackID) else {
+            // A departed publication is already unsubscribed by definition.
+            lock.withLock {
+                renderers.removeValue(forKey: trackID)
+                audioRenderers.removeValue(forKey: trackID)
+            }
+            return
+        }
+        if let track = publication.track as? RemoteVideoTrack,
+           let renderer = lock.withLock({ renderers.removeValue(forKey: trackID) }) {
+            track.remove(videoRenderer: renderer)
+        }
+        if let track = publication.track as? RemoteAudioTrack {
+            track.volume = 0
+            if let renderer = lock.withLock({ audioRenderers.removeValue(forKey: trackID) }) {
+                track.remove(audioRenderer: renderer)
+            }
+        }
+        try await publication.set(subscribed: false)
+    }
+
     func disconnect() async {
         lock.withLock {
             renderers.removeAll()
             audioRenderers.removeAll()
             cameraTrack = nil
             cameraCapturer = nil
+            desiredCameraPublishEnabled = true
+            cameraPublishIntentGeneration &+= 1
         }
         await room.disconnect()
         emit(.idle)
@@ -241,11 +283,30 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
     }
 
     func setCameraPublishEnabled(_ enabled: Bool) async throws {
-        guard let track = cameraTrack else { return }
-        if enabled {
-            try await track.unmute()
-        } else {
-            try await track.mute()
+        let track = lock.withLock { () -> LocalVideoTrack? in
+            desiredCameraPublishEnabled = enabled
+            cameraPublishIntentGeneration &+= 1
+            return cameraTrack
+        }
+        guard let track else { return }
+        try await reconcileCameraPublishIntent(on: track)
+    }
+
+    private func reconcileCameraPublishIntent(on track: LocalVideoTrack) async throws {
+        while true {
+            let snapshot = lock.withLock {
+                (desiredCameraPublishEnabled, cameraPublishIntentGeneration, cameraTrack === track)
+            }
+            guard snapshot.2 else { return }
+            if snapshot.0 {
+                try await track.unmute()
+            } else {
+                try await track.mute()
+            }
+            let isCurrent = lock.withLock {
+                cameraTrack === track && cameraPublishIntentGeneration == snapshot.1
+            }
+            if isCurrent { return }
         }
     }
 
@@ -337,7 +398,7 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
         return Int64((time.seconds * 1_000_000_000).rounded())
     }
 
-    private static func makePCMBuffer(from sampleBuffer: CMSampleBuffer) -> AVAudioPCMBuffer? {
+    static func makePCMBuffer(from sampleBuffer: CMSampleBuffer) -> AVAudioPCMBuffer? {
         guard let description = CMSampleBufferGetFormatDescription(sampleBuffer),
               let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(description),
               asbd.pointee.mFormatID == kAudioFormatLinearPCM,

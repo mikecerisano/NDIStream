@@ -248,7 +248,9 @@ final class LinkConnectionController: ObservableObject {
         remoteTracks = tracks.sorted(by: Self.trackOrder)
 
         if let selectedVideoTrack,
-           !tracks.contains(where: { $0.selectionID == selectedVideoTrack && $0.kind == .camera }) {
+           !tracks.contains(where: {
+               $0.selectionID == selectedVideoTrack && $0.kind == .camera && !$0.isMuted
+           }) {
             self.selectedVideoTrack = nil
         }
         if self.selectedVideoTrack == nil {
@@ -257,7 +259,9 @@ final class LinkConnectionController: ObservableObject {
 
         let selectedParticipant = selectedVideoTrack?.participantID
         if let selectedAudioTrack,
-           (!tracks.contains(where: { $0.selectionID == selectedAudioTrack && $0.kind == .microphone })
+           (!tracks.contains(where: {
+               $0.selectionID == selectedAudioTrack && $0.kind == .microphone && !$0.isMuted
+           })
             || selectedAudioTrack.participantID != selectedParticipant) {
             self.selectedAudioTrack = nil
         }

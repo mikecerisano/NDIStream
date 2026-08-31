@@ -165,6 +165,9 @@ private final class LiveKitClientSpy: LiveKitClient {
 
     func setMicrophoneEnabled(_ enabled: Bool) async throws { microphoneValues.append(enabled) }
     func subscribe(to trackID: String) async throws { subscribedTrackIDs.append(trackID) }
+    func unsubscribe(from trackID: String) async throws {
+        subscribedTrackIDs.removeAll { $0 == trackID }
+    }
     func disconnect() async { disconnectCount += 1 }
 
     func emitState(_ state: LiveKitClientState) { onStateChanged?(state) }

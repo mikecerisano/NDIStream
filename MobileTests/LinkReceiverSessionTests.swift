@@ -35,6 +35,38 @@ final class LinkReceiverSessionTests: XCTestCase {
         XCTAssertEqual(session.audioCaptureOwnership, .application)
     }
 
+    func testCameraOffBeforeFirstFrameIsReappliedAfterLazyTrackPublication() async throws {
+        let client = LinkLiveKitClientSpy()
+        let session = LiveKitMediaSession(client: client)
+        let source = LocalMediaSource()
+        try await session.connect(configuration: configuration)
+        try await session.publishCamera(source)
+
+        try await session.setCameraPublishEnabled(false)
+        XCTAssertEqual(client.cameraPublishValues, [false])
+
+        source.emitVideo(try makePixelBuffer(), presentationTime: .zero)
+        try await settle()
+
+        XCTAssertEqual(client.publishedFrameTimes, [.zero])
+        XCTAssertEqual(client.cameraPublishValues, [false, false],
+                       "camera-off must be reconciled after the first frame creates the SDK track")
+    }
+
+    func testFloat32InterleavedSampleConvertsToLiveKitPCMBuffer() throws {
+        let sample = try XCTUnwrap(AudioSampleBufferFactory.makeInterleavedFloat(
+            samples: [0.25, -0.5], sampleRate: 48_000, channels: 1, presentationTime: .zero
+        ))
+        let converted = try XCTUnwrap(LiveKitSDKClient.makePCMBuffer(from: sample))
+
+        XCTAssertEqual(converted.frameLength, 2)
+        XCTAssertEqual(converted.audioBufferList.pointee.mBuffers.mDataByteSize, 8)
+        let data = try XCTUnwrap(converted.audioBufferList.pointee.mBuffers.mData)
+            .assumingMemoryBound(to: Float.self)
+        XCTAssertEqual(data[0], 0.25, accuracy: 0.0001)
+        XCTAssertEqual(data[1], -0.5, accuracy: 0.0001)
+    }
+
     func testConnectProjectsTracksSubscribesCameraAndMatchingMicrophone() async throws {
         let camera = track("camera", participant: "a", name: "Camera A", kind: .camera)
         let microphone = track("microphone", participant: "a", name: "Camera A", kind: .microphone)
@@ -64,6 +96,37 @@ final class LinkReceiverSessionTests: XCTestCase {
         XCTAssertNil(receiver.selectedVideoTrack)
         XCTAssertEqual(receiver.selectedAudioTrack, microphone.selectionID)
         XCTAssertEqual(mediaSession.subscribed, [microphone.id])
+    }
+
+    func testMutedSelectedCameraHandsOffThenClearsWithoutCachingADeadSelection() async throws {
+        let cameraA = track("camera-a", participant: "a", name: "A", kind: .camera)
+        let cameraB = track("camera-b", participant: "b", name: "B", kind: .camera)
+        let mediaSession = StubMediaSession(tracks: [cameraA, cameraB])
+        let duplex = LinkDuplexSession(session: mediaSession)
+        var selections: [MediaTrackSelectionID?] = []
+        duplex.onSelectedVideoTrackChanged = { selections.append($0) }
+
+        try await duplex.connect(configuration: configuration)
+        try await settle()
+        XCTAssertEqual(selections.last!, cameraA.selectionID)
+
+        mediaSession.emitTracks([muted(cameraA), cameraB])
+        try await settle()
+        XCTAssertEqual(selections.last!, cameraB.selectionID,
+                       "the remaining active camera must replace a muted selection")
+        XCTAssertEqual(mediaSession.activeSubscriptions, Set([cameraB.id]),
+                       "handoff must release A instead of decoding two cameras")
+
+        mediaSession.emitTracks([muted(cameraA), muted(cameraB)])
+        try await settle()
+        XCTAssertNil(selections.last!, "no active remote camera must be represented as nil")
+        XCTAssertTrue(mediaSession.activeSubscriptions.isEmpty,
+                      "all-muted must leave no remote media subscribed")
+
+        mediaSession.emitTracks([cameraA, cameraB])
+        try await settle()
+        XCTAssertEqual(selections.last!, cameraA.selectionID,
+                       "after an empty selection, deterministic track order breaks a tie")
     }
 
     func testApplicationOwnedCallAudioDisablesEveryLiveKitProcessingStage() {
@@ -165,6 +228,16 @@ final class LinkReceiverSessionTests: XCTestCase {
         RemoteMediaTrack(id: .init(rawValue: id), participantID: .init(rawValue: participant), participantName: name, kind: kind, isMuted: false)
     }
 
+    private func muted(_ track: RemoteMediaTrack) -> RemoteMediaTrack {
+        RemoteMediaTrack(
+            id: track.id,
+            participantID: track.participantID,
+            participantName: track.participantName,
+            kind: track.kind,
+            isMuted: true
+        )
+    }
+
     // Subscribes run on fire-and-forget tasks that hop executors; give them
     // real time plus main-actor yields so every enqueued task completes.
     private func settle() async throws {
@@ -207,6 +280,7 @@ private final class LinkLiveKitClientSpy: LiveKitClient {
     var onAudioFrame: (@Sendable (String, AVAudioPCMBuffer) -> Void)?
     var publishedFrameTimes: [CMTime] = []
     var capturedAudioCount = 0
+    var cameraPublishValues: [Bool] = []
 
     func connect(serverURL: URL, token: String) async throws { onStateChanged?(.connected) }
     func publishCamera(firstFrame: CVPixelBuffer, presentationTime: CMTime) async throws {
@@ -217,8 +291,9 @@ private final class LinkLiveKitClientSpy: LiveKitClient {
     }
     func captureAudio(_ sampleBuffer: CMSampleBuffer) { capturedAudioCount += 1 }
     func setMicrophoneEnabled(_ enabled: Bool) async throws {}
-    func setCameraPublishEnabled(_ enabled: Bool) async throws {}
+    func setCameraPublishEnabled(_ enabled: Bool) async throws { cameraPublishValues.append(enabled) }
     func subscribe(to trackID: String) async throws {}
+    func unsubscribe(from trackID: String) async throws {}
     func disconnect() async {}
 }
 
@@ -230,6 +305,8 @@ private final class StubMediaSession: MediaSession {
     var onRemoteVideoFrame: ((MediaTrackID, CMSampleBuffer) -> Void)?
     var onRemoteAudio: ((MediaTrackID, CMSampleBuffer) -> Void)?
     var subscribed: [MediaTrackID] = []
+    var unsubscribed: [MediaTrackID] = []
+    var activeSubscriptions = Set<MediaTrackID>()
     var didDisconnect = false
     var publishedSource: LocalMediaSource?
     var microphoneValues: [Bool] = []
@@ -247,8 +324,21 @@ private final class StubMediaSession: MediaSession {
     // Concurrent fire-and-forget subscribe tasks land here off the main actor;
     // hop the append to main so appends can't race each other or the test's read.
     func subscribe(to trackID: MediaTrackID) async throws {
-        await MainActor.run { subscribed.append(trackID) }
+        await MainActor.run {
+            subscribed.append(trackID)
+            activeSubscriptions.insert(trackID)
+        }
+    }
+    func unsubscribe(from trackID: MediaTrackID) async throws {
+        await MainActor.run {
+            unsubscribed.append(trackID)
+            activeSubscriptions.remove(trackID)
+        }
     }
     func disconnect() async { didDisconnect = true; state = .idle }
     func currentStats() -> TransportStats? { nil }
+    func emitTracks(_ tracks: [RemoteMediaTrack]) {
+        remoteTracks = tracks
+        onRemoteTracksChanged?(tracks)
+    }
 }

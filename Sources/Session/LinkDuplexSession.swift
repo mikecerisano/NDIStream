@@ -11,6 +11,9 @@ public final class LinkDuplexSession {
     public var onAudioFrame: ((MediaTrackID, CMSampleBuffer) -> Void)? {
         didSet { receiver.onAudioFrame = onAudioFrame }
     }
+    public var onSelectedVideoTrackChanged: ((MediaTrackSelectionID?) -> Void)? {
+        didSet { receiver.onSelectedVideoTrackChanged = onSelectedVideoTrackChanged }
+    }
 
     /// Forwarded receiver state — the Mac call owner's `connectionPhase`
     /// source (video-chat plan v2: `LinkDuplexSession` exposed no state at

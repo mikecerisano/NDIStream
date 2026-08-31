@@ -182,7 +182,7 @@ final class LinkConnectionControllerTests: XCTestCase {
         XCTAssertEqual(session.subscribedTrackIDs.count, 2, "Track list reordering must not resubscribe or change selection")
     }
 
-    func testReplacesDepartedTrackButDoesNotSwitchAwayFromMutedSelectedParticipant() async throws {
+    func testReplacesMutedSelectedParticipantWithRemainingActiveCamera() async throws {
         let session = StubMediaSession()
         let controller = configuredController(session: session)
         await controller.join()
@@ -195,8 +195,8 @@ final class LinkConnectionControllerTests: XCTestCase {
         try await settleCallbacks()
         session.emitTracks([cameraAMuted, cameraB])
         try await settleCallbacks()
-        XCTAssertEqual(controller.selectedVideoTrack, cameraA.selectionID,
-                       "A temporary mute must not jump the monitor to another participant")
+        XCTAssertEqual(controller.selectedVideoTrack, cameraB.selectionID,
+                       "a muted camera cannot remain the selected live source")
 
         session.emitTracks([cameraB])
         try await settleCallbacks()
