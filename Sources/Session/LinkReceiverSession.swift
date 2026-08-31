@@ -119,7 +119,18 @@ public final class LinkReceiverSession {
             return
         }
         guard let participantID = selectedVideoTrack?.participantID else {
-            selectedAudioTrack = nil
+            // Audio-only calls have no camera selection to supply a
+            // participant identity. Select the first live microphone so the
+            // advertised audio-only policy is actually audible.
+            if let selectedAudioTrack,
+               remoteTracks.contains(where: {
+                   $0.selectionID == selectedAudioTrack && $0.kind == .microphone && !$0.isMuted
+               }) {
+                return
+            }
+            selectedAudioTrack = remoteTracks.first(where: {
+                $0.kind == .microphone && !$0.isMuted
+            })?.selectionID
             return
         }
         if let selectedAudioTrack,

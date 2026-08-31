@@ -52,6 +52,30 @@ final class LinkReceiverSessionTests: XCTestCase {
         XCTAssertEqual(Set(mediaSession.subscribed), Set([camera.id, microphone.id]))
     }
 
+    func testAudioOnlyPublisherIsSelectedAndSubscribed() async throws {
+        let microphone = track("microphone", participant: "audio-only", name: "Audio A", kind: .microphone)
+        let mediaSession = StubMediaSession(tracks: [microphone])
+        let receiver = LinkReceiverSession(session: mediaSession)
+        receiver.isAudioSubscriptionEnabled = true
+
+        try await receiver.connect(configuration: configuration)
+        try await settle()
+
+        XCTAssertNil(receiver.selectedVideoTrack)
+        XCTAssertEqual(receiver.selectedAudioTrack, microphone.selectionID)
+        XCTAssertEqual(mediaSession.subscribed, [microphone.id])
+    }
+
+    func testApplicationOwnedCallAudioDisablesEveryLiveKitProcessingStage() {
+        let policy = LinkApplicationAudioProcessingPolicy.unprocessed
+
+        XCTAssertFalse(policy.echoCancellation)
+        XCTAssertFalse(policy.autoGainControl)
+        XCTAssertFalse(policy.noiseSuppression)
+        XCTAssertFalse(policy.highpassFilter)
+        XCTAssertFalse(policy.typingNoiseDetection)
+    }
+
     func testExplicitVideoChoiceMovesAudioToSameParticipantAndRoutesOnlySelection() async throws {
         let cameraA = track("camera-a", participant: "a", name: "A", kind: .camera)
         let microphoneA = track("microphone-a", participant: "a", name: "A", kind: .microphone)

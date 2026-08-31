@@ -13,6 +13,37 @@ public enum LinkStreamPublishTuning {
     public static var maxVideoBitrate: Int = 1_700_000
 }
 
+/// The call publishes application-owned PCM from the same AVCapture graph
+/// that records the local ISO. LiveKit's default voice-processing profile may
+/// change the physical system microphone gain even though its device-mic leg
+/// is muted in the mixer. Keep that device path completely unprocessed so a
+/// call cannot turn down the recorder underneath a take.
+struct LinkApplicationAudioProcessingPolicy: Equatable, Sendable {
+    let echoCancellation: Bool
+    let autoGainControl: Bool
+    let noiseSuppression: Bool
+    let highpassFilter: Bool
+    let typingNoiseDetection: Bool
+
+    static let unprocessed = LinkApplicationAudioProcessingPolicy(
+        echoCancellation: false,
+        autoGainControl: false,
+        noiseSuppression: false,
+        highpassFilter: false,
+        typingNoiseDetection: false
+    )
+
+    var captureOptions: AudioCaptureOptions {
+        AudioCaptureOptions(
+            echoCancellation: echoCancellation,
+            autoGainControl: autoGainControl,
+            noiseSuppression: noiseSuppression,
+            highpassFilter: highpassFilter,
+            typingNoiseDetection: typingNoiseDetection
+        )
+    }
+}
+
 final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
     /// LiveKit Swift 2.16 cannot accept the application's existing microphone
     /// sample buffers. Keep microphone capture ownership explicit so we never
@@ -53,7 +84,9 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
     /// mixer-injected track in this SDK build is unverified (plan
     /// uninspectable); the option is harmless if ignored.
     private static func callRoomOptions() -> RoomOptions {
-        RoomOptions(
+        let applicationAudio = LinkApplicationAudioProcessingPolicy.unprocessed
+        return RoomOptions(
+            defaultAudioCaptureOptions: applicationAudio.captureOptions,
             defaultVideoPublishOptions: VideoPublishOptions(
                 // 1.7 Mbps paired with the app-side 720p short-edge cap on
                 // published frames (Aug 27 quality ruling): bits the encoder
