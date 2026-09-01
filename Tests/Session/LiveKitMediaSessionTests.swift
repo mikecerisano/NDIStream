@@ -133,6 +133,8 @@ final class LiveKitMediaSessionTests: XCTestCase {
 private final class LiveKitClientSpy: LiveKitClient {
     var remotePlaybackMutedValues: [Bool] = []
     func setRemotePlaybackMuted(_ muted: Bool) { remotePlaybackMutedValues.append(muted) }
+    var remotePlaybackGainValues: [Double] = []
+    func setRemotePlaybackGain(_ gain: Double) { remotePlaybackGainValues.append(gain) }
     var onStateChanged: ((LiveKitClientState) -> Void)?
     var onTracksChanged: (([LiveKitTrackDescriptor]) -> Void)?
     var onVideoFrame: ((_ trackID: String, _ pixelBuffer: CVPixelBuffer, _ presentationTime: CMTime) -> Void)?

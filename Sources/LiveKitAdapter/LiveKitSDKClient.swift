@@ -75,6 +75,9 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
     /// Operator mute for REMOTE playback (the peer's voice). Applied to every
     /// current remote audio track and re-applied to late subscriptions.
     private var remotePlaybackMuted = false
+    /// Linear operator trim for peer playout. Muting and gain remain separate
+    /// so an emergency silence can restore the exact prior listening level.
+    private var remotePlaybackGain: Double = 1
 
     var usesSDKMicrophoneCapture: Bool { microphoneCaptureOwnership == .liveKit }
 
@@ -328,7 +331,22 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
             for participant in room.remoteParticipants.values {
                 for publication in participant.trackPublications.values {
                     if let track = publication.track as? RemoteAudioTrack {
-                        track.volume = muted ? 0 : 1
+                        track.volume = muted ? 0 : remotePlaybackGain
+                    }
+                }
+            }
+        }
+    }
+
+    func setRemotePlaybackGain(_ gain: Double) {
+        let clamped = min(max(gain, 0), 1)
+        lock.withLock {
+            remotePlaybackGain = clamped
+            guard !remotePlaybackMuted else { return }
+            for participant in room.remoteParticipants.values {
+                for publication in participant.trackPublications.values {
+                    if let track = publication.track as? RemoteAudioTrack {
+                        track.volume = clamped
                     }
                 }
             }
@@ -380,7 +398,7 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
             // Same critical section as setRemotePlaybackMuted: read + apply
             // atomically so a concurrent operator flip can't be overwritten
             // with a stale value.
-            lock.withLock { track.volume = remotePlaybackMuted ? 0 : 1 }
+            lock.withLock { track.volume = remotePlaybackMuted ? 0 : remotePlaybackGain }
             let renderer: PCMBufferRenderer = lock.withLock {
                 if let existing = audioRenderers[trackID] { return existing }
                 let created = PCMBufferRenderer(trackID: trackID) { [weak self] id, buffer in

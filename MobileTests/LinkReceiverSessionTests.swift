@@ -226,6 +226,18 @@ final class LinkReceiverSessionTests: XCTestCase {
         XCTAssertEqual(duplexClient.remotePlaybackMutedValues, [true])
     }
 
+    func testRemotePlaybackGainForwardsThroughSessionAndDuplex() async throws {
+        let client = LinkLiveKitClientSpy()
+        let session = LiveKitMediaSession(client: client)
+        session.setRemotePlaybackGain(0.35)
+        XCTAssertEqual(client.remotePlaybackGainValues, [0.35])
+
+        let duplexClient = LinkLiveKitClientSpy()
+        let duplex = LinkDuplexSession(session: LiveKitMediaSession(client: duplexClient))
+        duplex.setRemotePlaybackGain(0.6)
+        XCTAssertEqual(duplexClient.remotePlaybackGainValues, [0.6])
+    }
+
     private var configuration: SessionConfiguration {
         SessionConfiguration(serverURL: URL(string: "wss://example.invalid"), roomName: "room", displayName: "iPad", accessToken: "runtime-token")
     }
@@ -280,6 +292,8 @@ final class LinkReceiverSessionTests: XCTestCase {
 private final class LinkLiveKitClientSpy: LiveKitClient {
     var remotePlaybackMutedValues: [Bool] = []
     func setRemotePlaybackMuted(_ muted: Bool) { remotePlaybackMutedValues.append(muted) }
+    var remotePlaybackGainValues: [Double] = []
+    func setRemotePlaybackGain(_ gain: Double) { remotePlaybackGainValues.append(gain) }
     var onStateChanged: ((LiveKitClientState) -> Void)?
     var onTracksChanged: (([LiveKitTrackDescriptor]) -> Void)?
     var onVideoFrame: ((String, CVPixelBuffer, CMTime) -> Void)?

@@ -27,6 +27,7 @@ protocol LiveKitClient: AnyObject {
     func setMicrophoneEnabled(_ enabled: Bool) async throws
     func setCameraPublishEnabled(_ enabled: Bool) async throws
     func setRemotePlaybackMuted(_ muted: Bool)
+    func setRemotePlaybackGain(_ gain: Double)
     func subscribe(to trackID: String) async throws
     func unsubscribe(from trackID: String) async throws
     func disconnect() async
@@ -121,6 +122,10 @@ public final class LiveKitMediaSession: MediaSession {
 
     public func setRemotePlaybackMuted(_ muted: Bool) {
         client.setRemotePlaybackMuted(muted)
+    }
+
+    public func setRemotePlaybackGain(_ gain: Double) {
+        client.setRemotePlaybackGain(gain)
     }
 
     public func setMicrophoneEnabled(_ enabled: Bool) async throws { try await client.setMicrophoneEnabled(enabled) }
