@@ -130,14 +130,19 @@ final class LinkReceiverSessionTests: XCTestCase {
                        "after an empty selection, deterministic track order breaks a tie")
     }
 
-    func testApplicationOwnedCallAudioDisablesEveryLiveKitProcessingStage() {
-        let policy = LinkApplicationAudioProcessingPolicy.unprocessed
+    func testApplicationOwnedCallAudioUsesSoftwareAECWithoutGainChangingProcessing() {
+        let policy = LinkApplicationAudioProcessingPolicy.speakerphoneSafe
+        let options = policy.captureOptions
 
-        XCTAssertFalse(policy.echoCancellation)
+        XCTAssertTrue(policy.echoCancellation)
         XCTAssertFalse(policy.autoGainControl)
         XCTAssertFalse(policy.noiseSuppression)
         XCTAssertFalse(policy.highpassFilter)
         XCTAssertFalse(policy.typingNoiseDetection)
+        XCTAssertEqual(options.echoCancellationMode, .software)
+        XCTAssertEqual(options.autoGainControlMode, .software)
+        XCTAssertEqual(options.noiseSuppressionMode, .software)
+        XCTAssertEqual(options.highpassFilterMode, .software)
     }
 
     func testExplicitVideoChoiceMovesAudioToSameParticipantAndRoutesOnlySelection() async throws {

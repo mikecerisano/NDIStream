@@ -14,10 +14,11 @@ public enum LinkStreamPublishTuning {
 }
 
 /// The call publishes application-owned PCM from the same AVCapture graph
-/// that records the local ISO. LiveKit's default voice-processing profile may
-/// change the physical system microphone gain even though its device-mic leg
-/// is muted in the mixer. Keep that device path completely unprocessed so a
-/// call cannot turn down the recorder underneath a take.
+/// that records the local ISO. Speakerphone operation still needs echo
+/// cancellation, but Apple's coupled voice-processing path and LiveKit's
+/// default AGC may change the physical system microphone gain underneath the
+/// raw ISO recorder. Force WebRTC's software AEC only; keep every level- or
+/// tone-changing stage off. The ISO tap occurs before this call-only policy.
 struct LinkApplicationAudioProcessingPolicy: Equatable, Sendable {
     let echoCancellation: Bool
     let autoGainControl: Bool
@@ -25,8 +26,8 @@ struct LinkApplicationAudioProcessingPolicy: Equatable, Sendable {
     let highpassFilter: Bool
     let typingNoiseDetection: Bool
 
-    static let unprocessed = LinkApplicationAudioProcessingPolicy(
-        echoCancellation: false,
+    static let speakerphoneSafe = LinkApplicationAudioProcessingPolicy(
+        echoCancellation: true,
         autoGainControl: false,
         noiseSuppression: false,
         highpassFilter: false,
@@ -39,7 +40,11 @@ struct LinkApplicationAudioProcessingPolicy: Equatable, Sendable {
             autoGainControl: autoGainControl,
             noiseSuppression: noiseSuppression,
             highpassFilter: highpassFilter,
-            typingNoiseDetection: typingNoiseDetection
+            typingNoiseDetection: typingNoiseDetection,
+            echoCancellationMode: .software,
+            autoGainControlMode: .software,
+            noiseSuppressionMode: .software,
+            highpassFilterMode: .software
         )
     }
 }
@@ -86,7 +91,7 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
     /// mixer-injected track in this SDK build is unverified (plan
     /// uninspectable); the option is harmless if ignored.
     private static func callRoomOptions() -> RoomOptions {
-        let applicationAudio = LinkApplicationAudioProcessingPolicy.unprocessed
+        let applicationAudio = LinkApplicationAudioProcessingPolicy.speakerphoneSafe
         return RoomOptions(
             defaultAudioCaptureOptions: applicationAudio.captureOptions,
             defaultVideoPublishOptions: VideoPublishOptions(
@@ -126,6 +131,10 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
         // 2. Automatic session configuration off — the session observer's
         //    configure path is a total no-op even if an engine state slips.
         if microphoneCaptureOwnership == .application {
+            // Fail closed against Apple Voice Processing I/O. Software AEC
+            // receives the far-end playout reference without letting the OS
+            // couple echo cancellation back to hardware AGC/input gain.
+            try? AudioManager.shared.setPlatformVoiceProcessingAllowed(false)
             // NORMAL engine mode (Aug 28 field fix, codex-verified in 2.16
             // source): manual rendering is UNSHIPPABLE here — the SDK's own
             // tests pin the engine as non-running in manual mode, so
