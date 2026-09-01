@@ -44,8 +44,14 @@ public final class LinkDuplexSession {
     }
 
     public func publish(_ source: LocalMediaSource, microphoneEnabled: Bool) async throws {
-        try await session.publishCamera(source)
+        // Start LiveKit's microphone track (and therefore its AVAudioEngine)
+        // before subscribing the application-owned media source. Subscribing
+        // first lets live PCM arrive while LiveKit is still resetting and
+        // starting MixerEngineObserver.appNode; AVAudioPlayerNode.play() then
+        // raises an Objective-C exception instead of returning an Error. That
+        // race was captured in a macOS crash report during a second-peer join.
         try await session.setMicrophoneEnabled(microphoneEnabled)
+        try await session.publishCamera(source)
     }
 
     /// Operator mute for the peer's voice playback (remote SDK playout).

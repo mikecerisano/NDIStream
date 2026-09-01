@@ -16,6 +16,7 @@ final class LinkReceiverSessionTests: XCTestCase {
 
         XCTAssertTrue(mediaSession.publishedSource === source)
         XCTAssertEqual(mediaSession.microphoneValues, [true])
+        XCTAssertEqual(mediaSession.publishEvents, ["microphone:true", "source"])
         XCTAssertTrue(mediaSession.didDisconnect)
     }
 
@@ -310,6 +311,7 @@ private final class StubMediaSession: MediaSession {
     var didDisconnect = false
     var publishedSource: LocalMediaSource?
     var microphoneValues: [Bool] = []
+    var publishEvents: [String] = []
 
     init(tracks: [RemoteMediaTrack]) { remoteTracks = tracks }
     func connect(configuration: SessionConfiguration) async throws {
@@ -317,8 +319,14 @@ private final class StubMediaSession: MediaSession {
         onStateChanged?(.connected)
         onRemoteTracksChanged?(remoteTracks)
     }
-    func publishCamera(_ source: LocalMediaSource) async throws { publishedSource = source }
-    func setMicrophoneEnabled(_ enabled: Bool) async throws { microphoneValues.append(enabled) }
+    func publishCamera(_ source: LocalMediaSource) async throws {
+        publishedSource = source
+        publishEvents.append("source")
+    }
+    func setMicrophoneEnabled(_ enabled: Bool) async throws {
+        microphoneValues.append(enabled)
+        publishEvents.append("microphone:\(enabled)")
+    }
     var cameraPublishValues: [Bool] = []
     func setCameraPublishEnabled(_ enabled: Bool) async throws { cameraPublishValues.append(enabled) }
     // Concurrent fire-and-forget subscribe tasks land here off the main actor;
