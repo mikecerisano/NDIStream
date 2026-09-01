@@ -211,16 +211,41 @@ public final class LiveKitMediaSession: MediaSession {
 
     private func receiveAudio(trackID: String, buffer: AVAudioPCMBuffer) {
         guard lock.withLock({ connected }),
-              let channels = buffer.floatChannelData,
               buffer.format.channelCount > 0,
               buffer.frameLength > 0 else { return }
         let channelCount = Int(buffer.format.channelCount)
         let frameCount = Int(buffer.frameLength)
         var interleaved = [Float](repeating: 0, count: channelCount * frameCount)
-        for channel in 0..<channelCount {
-            for frame in 0..<frameCount {
-                interleaved[frame * channelCount + channel] = channels[channel][frame]
+
+        // LiveKit/WebRTC's remote AudioRenderer currently supplies Int16,
+        // non-interleaved PCM. The previous floatChannelData-only guard
+        // therefore discarded every decoded partner buffer even while the
+        // SDK's independent speaker playout remained perfectly audible. That
+        // made application consumers (meters and monitor recording) report
+        // "No audio" for a working call. Accept both WebRTC Int16 and Float32,
+        // and normalize them into the transport's documented interleaved-float
+        // CMSampleBuffer contract.
+        switch buffer.format.commonFormat {
+        case .pcmFormatFloat32:
+            guard let channels = buffer.floatChannelData else { return }
+            for channel in 0..<channelCount {
+                let source = channels[buffer.format.isInterleaved ? 0 : channel]
+                for frame in 0..<frameCount {
+                    let sourceIndex = buffer.format.isInterleaved ? frame * channelCount + channel : frame
+                    interleaved[frame * channelCount + channel] = source[sourceIndex]
+                }
             }
+        case .pcmFormatInt16:
+            guard let channels = buffer.int16ChannelData else { return }
+            for channel in 0..<channelCount {
+                let source = channels[buffer.format.isInterleaved ? 0 : channel]
+                for frame in 0..<frameCount {
+                    let sourceIndex = buffer.format.isInterleaved ? frame * channelCount + channel : frame
+                    interleaved[frame * channelCount + channel] = Float(source[sourceIndex]) / 32768
+                }
+            }
+        default:
+            return
         }
         let sampleRate = Int32(buffer.format.sampleRate.rounded())
         let pts = lock.withLock { () -> CMTime in

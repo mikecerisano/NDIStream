@@ -68,6 +68,48 @@ final class LinkReceiverSessionTests: XCTestCase {
         XCTAssertEqual(data[1], -0.5, accuracy: 0.0001)
     }
 
+    func testRemoteWebRTCInt16AudioReachesApplicationConsumersAsFloat() async throws {
+        let client = LinkLiveKitClientSpy()
+        let session = LiveKitMediaSession(client: client)
+        let received = expectation(description: "remote audio")
+        session.onRemoteAudio = { trackID, sample in
+            XCTAssertEqual(trackID, MediaTrackID(rawValue: "remote-mic"))
+            guard let block = CMSampleBufferGetDataBuffer(sample) else {
+                return XCTFail("remote audio must carry PCM data")
+            }
+            var length = 0
+            var pointer: UnsafeMutablePointer<Int8>?
+            XCTAssertEqual(
+                CMBlockBufferGetDataPointer(
+                    block, atOffset: 0, lengthAtOffsetOut: nil,
+                    totalLengthOut: &length, dataPointerOut: &pointer
+                ),
+                kCMBlockBufferNoErr
+            )
+            XCTAssertEqual(length, 2 * MemoryLayout<Float>.size)
+            let samples = pointer!.withMemoryRebound(to: Float.self, capacity: 2) { $0 }
+            XCTAssertEqual(samples[0], 0.5, accuracy: 0.001)
+            XCTAssertEqual(samples[1], -0.5, accuracy: 0.001)
+            received.fulfill()
+        }
+        try await session.connect(configuration: configuration)
+
+        let format = try XCTUnwrap(AVAudioFormat(
+            commonFormat: .pcmFormatInt16,
+            sampleRate: 48_000,
+            channels: 1,
+            interleaved: false
+        ))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 2))
+        buffer.frameLength = 2
+        let channel = try XCTUnwrap(buffer.int16ChannelData?[0])
+        channel[0] = 16_384
+        channel[1] = -16_384
+        client.emitAudio(trackID: "remote-mic", buffer: buffer)
+
+        await fulfillment(of: [received], timeout: 2)
+    }
+
     func testConnectProjectsTracksSubscribesCameraAndMatchingMicrophone() async throws {
         let camera = track("camera", participant: "a", name: "Camera A", kind: .camera)
         let microphone = track("microphone", participant: "a", name: "Camera A", kind: .microphone)
@@ -310,6 +352,9 @@ private final class LinkLiveKitClientSpy: LiveKitClient {
         publishedFrameTimes.append(presentationTime)
     }
     func captureAudio(_ sampleBuffer: CMSampleBuffer) { capturedAudioCount += 1 }
+    func emitAudio(trackID: String, buffer: AVAudioPCMBuffer) {
+        onAudioFrame?(trackID, buffer)
+    }
     func setMicrophoneEnabled(_ enabled: Bool) async throws {}
     func setCameraPublishEnabled(_ enabled: Bool) async throws { cameraPublishValues.append(enabled) }
     func subscribe(to trackID: String) async throws {}
