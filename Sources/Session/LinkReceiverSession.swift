@@ -26,6 +26,7 @@ public final class LinkReceiverSession {
     private var subscribedTrackIDs = Set<MediaTrackID>()
     private var desiredSubscribedTrackIDs = Set<MediaTrackID>()
     private var subscriptionTask: Task<Void, Never>?
+    private var subscriptionGeneration: UInt64 = 0
 
     public init(session: MediaSession = LiveKitMediaSession()) {
         self.session = session
@@ -34,6 +35,7 @@ public final class LinkReceiverSession {
 
     public func connect(configuration: SessionConfiguration) async throws {
         guard state == .idle || isFailed else { return }
+        subscriptionGeneration &+= 1
         subscriptionTask?.cancel()
         subscriptionTask = nil
         subscribedTrackIDs.removeAll()
@@ -50,9 +52,12 @@ public final class LinkReceiverSession {
     }
 
     public func disconnect() async {
-        subscriptionTask?.cancel()
-        subscriptionTask = nil
+        subscriptionGeneration &+= 1
         desiredSubscribedTrackIDs.removeAll()
+        let staleTask = subscriptionTask
+        subscriptionTask = nil
+        staleTask?.cancel()
+        await staleTask?.value
         await session.disconnect()
         subscribedTrackIDs.removeAll()
         remoteTracks = []
@@ -171,24 +176,32 @@ public final class LinkReceiverSession {
             [selectedVideoTrack?.trackID, selectedAudioTrack?.trackID].compactMap { $0 }
         )
         guard subscriptionTask == nil else { return }
+        let generation = subscriptionGeneration
         subscriptionTask = Task { [weak self] in
-            await self?.runSubscriptionReconciliation()
+            await self?.runSubscriptionReconciliation(generation: generation)
         }
     }
 
-    private func runSubscriptionReconciliation() async {
+    private func runSubscriptionReconciliation(generation: UInt64) async {
+        var failed = false
         defer {
-            subscriptionTask = nil
-            if subscribedTrackIDs != desiredSubscribedTrackIDs { reconcileSubscriptions() }
+            if subscriptionGeneration == generation {
+                subscriptionTask = nil
+                if !failed, subscribedTrackIDs != desiredSubscribedTrackIDs {
+                    reconcileSubscriptions()
+                }
+            }
         }
-        while !Task.isCancelled {
+        while !Task.isCancelled, subscriptionGeneration == generation {
             if let obsolete = subscribedTrackIDs.subtracting(desiredSubscribedTrackIDs)
                 .sorted(by: { $0.rawValue < $1.rawValue }).first {
                 do {
                     try await session.unsubscribe(from: obsolete)
-                    guard !Task.isCancelled else { return }
+                    guard !Task.isCancelled, subscriptionGeneration == generation else { return }
                     subscribedTrackIDs.remove(obsolete)
                 } catch {
+                    guard subscriptionGeneration == generation else { return }
+                    failed = true
                     setState(.failed(message: "Could not release remote media: \(error.localizedDescription)"))
                     return
                 }
@@ -198,9 +211,11 @@ public final class LinkReceiverSession {
                 .sorted(by: { $0.rawValue < $1.rawValue }).first {
                 do {
                     try await session.subscribe(to: missing)
-                    guard !Task.isCancelled else { return }
+                    guard !Task.isCancelled, subscriptionGeneration == generation else { return }
                     subscribedTrackIDs.insert(missing)
                 } catch {
+                    guard subscriptionGeneration == generation else { return }
+                    failed = true
                     setState(.failed(message: "Could not subscribe to remote media: \(error.localizedDescription)"))
                     return
                 }

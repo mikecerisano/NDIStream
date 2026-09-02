@@ -119,6 +119,13 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
         )
     }
 
+    /// StageGlass owns every remote subscription explicitly. LiveKit defaults
+    /// to subscribing to every publication, which would bypass the selected
+    /// participant policy before `LinkReceiverSession` can reconcile it.
+    static func callConnectOptions() -> ConnectOptions {
+        ConnectOptions(autoSubscribe: false)
+    }
+
     init(microphoneCaptureOwnership: MicrophoneCaptureOwnership = .application) {
         self.microphoneCaptureOwnership = microphoneCaptureOwnership
         // Single-session-owner law (StageGlass, Aug 27): the SDK must NEVER
@@ -168,7 +175,11 @@ final class LiveKitSDKClient: NSObject, LiveKitClient, @unchecked Sendable {
     func connect(serverURL: URL, token: String) async throws {
         emit(.connecting)
         do {
-            try await room.connect(url: serverURL.absoluteString, token: token)
+            try await room.connect(
+                url: serverURL.absoluteString,
+                token: token,
+                connectOptions: Self.callConnectOptions()
+            )
             emit(.connected)
             emitTracks()
         } catch {

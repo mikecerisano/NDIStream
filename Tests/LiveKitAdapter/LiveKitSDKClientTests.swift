@@ -7,6 +7,10 @@ final class LiveKitSDKClientTests: XCTestCase {
         _ = LiveKitSDKClient()
     }
 
+    func testCallConnectOptionsDisableAutomaticSubscription() {
+        XCTAssertFalse(LiveKitSDKClient.callConnectOptions().autoSubscribe)
+    }
+
     func testErrorDescriptionRedactsExactAccessToken() {
         let token = "secret-token-123"
         let error = NSError(

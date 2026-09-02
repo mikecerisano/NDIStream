@@ -5,6 +5,10 @@ import XCTest
 
 @MainActor
 final class LinkReceiverSessionTests: XCTestCase {
+    func testLiveKitConnectDisablesAutomaticSubscriptions() {
+        XCTAssertFalse(LiveKitSDKClient.callConnectOptions().autoSubscribe)
+    }
+
     func testDuplexSessionConnectsPublishesAndDisconnectsOneMediaSession() async throws {
         let mediaSession = StubMediaSession(tracks: [])
         let duplex = LinkDuplexSession(session: mediaSession)
@@ -124,7 +128,61 @@ final class LinkReceiverSessionTests: XCTestCase {
         XCTAssertEqual(receiver.state, .connected)
         XCTAssertEqual(receiver.selectedVideoTrack, camera.selectionID)
         XCTAssertEqual(receiver.selectedAudioTrack, microphone.selectionID)
-        XCTAssertEqual(Set(mediaSession.subscribed), Set([camera.id, microphone.id]))
+        XCTAssertEqual(mediaSession.activeSubscriptions, Set([camera.id, microphone.id]))
+    }
+
+    func testVideoOnlyReceiverSubscribesToNoMicrophones() async throws {
+        let camera = track("camera", participant: "a", name: "A", kind: .camera)
+        let microphone = track("microphone", participant: "a", name: "A", kind: .microphone)
+        let mediaSession = StubMediaSession(tracks: [camera, microphone])
+        let receiver = LinkReceiverSession(session: mediaSession)
+
+        try await receiver.connect(configuration: configuration)
+        try await settle()
+
+        XCTAssertEqual(receiver.selectedVideoTrack, camera.selectionID)
+        XCTAssertNil(receiver.selectedAudioTrack)
+        XCTAssertEqual(mediaSession.activeSubscriptions, Set([camera.id]))
+    }
+
+    func testDisablingAudioReleasesTheSelectedMicrophone() async throws {
+        let camera = track("camera", participant: "a", name: "A", kind: .camera)
+        let microphone = track("microphone", participant: "a", name: "A", kind: .microphone)
+        let mediaSession = StubMediaSession(tracks: [camera, microphone])
+        let receiver = LinkReceiverSession(session: mediaSession)
+        receiver.isAudioSubscriptionEnabled = true
+
+        try await receiver.connect(configuration: configuration)
+        try await settle()
+        XCTAssertEqual(mediaSession.activeSubscriptions, Set([camera.id, microphone.id]))
+
+        receiver.isAudioSubscriptionEnabled = false
+        try await settle()
+
+        XCTAssertNil(receiver.selectedAudioTrack)
+        XCTAssertEqual(mediaSession.activeSubscriptions, Set([camera.id]))
+        XCTAssertTrue(mediaSession.unsubscribed.contains(microphone.id))
+    }
+
+    func testLateParticipantRemainsUnsubscribedUntilSelected() async throws {
+        let cameraA = track("camera-a", participant: "a", name: "A", kind: .camera)
+        let microphoneA = track("microphone-a", participant: "a", name: "A", kind: .microphone)
+        let cameraB = track("camera-b", participant: "b", name: "B", kind: .camera)
+        let microphoneB = track("microphone-b", participant: "b", name: "B", kind: .microphone)
+        let mediaSession = StubMediaSession(tracks: [cameraA, microphoneA])
+        let receiver = LinkReceiverSession(session: mediaSession)
+        receiver.isAudioSubscriptionEnabled = true
+
+        try await receiver.connect(configuration: configuration)
+        try await settle()
+        mediaSession.emitTracks([cameraA, microphoneA, cameraB, microphoneB])
+        try await settle()
+
+        XCTAssertEqual(mediaSession.activeSubscriptions, Set([cameraA.id, microphoneA.id]))
+
+        receiver.selectVideoTrack(cameraB.selectionID)
+        try await settle()
+        XCTAssertEqual(mediaSession.activeSubscriptions, Set([cameraB.id, microphoneB.id]))
     }
 
     func testAudioOnlyPublisherIsSelectedAndSubscribed() async throws {
@@ -206,6 +264,9 @@ final class LinkReceiverSessionTests: XCTestCase {
         try await settle()
 
         XCTAssertEqual(receiver.selectedAudioTrack, microphoneB.selectionID)
+        XCTAssertEqual(mediaSession.activeSubscriptions, Set([cameraB.id, microphoneB.id]))
+        XCTAssertTrue(mediaSession.unsubscribed.contains(cameraA.id))
+        XCTAssertTrue(mediaSession.unsubscribed.contains(microphoneA.id))
         let sample = try makeVideoSampleBuffer()
         mediaSession.onRemoteVideoFrame?(cameraA.id, sample)
         mediaSession.onRemoteVideoFrame?(cameraB.id, sample)
